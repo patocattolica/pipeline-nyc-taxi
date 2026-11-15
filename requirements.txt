@@ -1,0 +1,8 @@
+airbyte==0.71.3
+dagster==1.13.30
+dagster-webserver==1.13.30
+dbt-core==1.12.7
+dbt-postgres==1.11.0
+duckdb==1.4.3
+pyarrow==21.0.0
+psycopg==3.3.9
