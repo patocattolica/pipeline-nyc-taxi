@@ -1,8 +1,32 @@
+# Credenciales (se sube solo la plantilla)
 .env
-.venv/
+.env.*
+!.env.example
+
+# Datos: la consigna pide un repo sin datos
 data/
+
+# Entorno y cachés de Python
+.venv/
 __pycache__/
 *.pyc
+.pytest_cache/
+
+# dbt
 target/
 dbt_packages/
 logs/
+
+# Dagster y DuckDB (estado local)
+.dagster/
+dagster_home/
+*.duckdb
+*.duckdb.wal
+
+# Material de referencia (no se entrega)
+referencia/
+
+# Editor / sistema
+.vscode/
+.idea/
+.DS_Store

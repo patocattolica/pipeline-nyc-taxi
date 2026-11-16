@@ -6,3 +6,4 @@ dbt-postgres==1.11.0
 duckdb==1.4.3
 pyarrow==21.0.0
 psycopg==3.3.9
+pytest==9.2.0
