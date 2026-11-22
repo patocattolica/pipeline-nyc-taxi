@@ -16,6 +16,7 @@ import pyarrow.parquet as pq
 RAIZ = Path(__file__).resolve().parents[2]
 URL_MES = "https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_{mes}.parquet"
 URL_ZONAS = "https://d37ci6vzurychx.cloudfront.net/misc/taxi_zone_lookup.csv"
+RUTA_ZONAS = RAIZ / "data/raw/zones/taxi_zone_lookup.csv"
 
 REINTENTOS = 3  # después del primer intento: 4 intentos en total
 ESPERA_INICIAL = 2  # segundos; se duplica en cada reintento (2, 4, 8)
@@ -24,6 +25,11 @@ ERRORES_DE_RED = (OSError, http.client.HTTPException)  # OSError incluye URLErro
 
 class DescargaIncompleta(OSError):
     """El servidor cortó antes de mandar todos los bytes que anunció."""
+
+
+def ruta_parquet(mes):
+    anio, m = mes.split("-")
+    return RAIZ / "data/raw/yellow" / f"year={anio}" / f"month={m}" / f"yellow_tripdata_{mes}.parquet"
 
 
 def mes_valido(texto):
@@ -52,8 +58,10 @@ def crear_tabla_log(con):
         """
         CREATE TABLE IF NOT EXISTS ingestion_log (
             id         bigserial PRIMARY KEY,
+            etapa      text        NOT NULL DEFAULT 'descarga'
+                                   CHECK (etapa IN ('descarga', 'ingesta')),
             archivo    text        NOT NULL,
-            url        text        NOT NULL,
+            url        text,
             filas      bigint,
             bytes      bigint,
             hash       text,
@@ -65,13 +73,18 @@ def crear_tabla_log(con):
     )
     # Si la tabla ya existía sin la columna, se la agrega (no hace nada si ya está).
     con.execute("ALTER TABLE ingestion_log ADD COLUMN IF NOT EXISTS mensaje text")
+    con.execute(
+        "ALTER TABLE ingestion_log ADD COLUMN IF NOT EXISTS etapa text NOT NULL DEFAULT 'descarga' "
+        "CHECK (etapa IN ('descarga', 'ingesta'))"
+    )
+    con.execute("ALTER TABLE ingestion_log ALTER COLUMN url DROP NOT NULL")  # la ingesta no tiene URL
 
 
-def ultimo_hash_ok(con, archivo):
+def ultimo_hash_ok(con, archivo, etapa="descarga"):
     fila = con.execute(
-        "SELECT hash FROM ingestion_log WHERE archivo = %s AND estado = 'ok' "
+        "SELECT hash FROM ingestion_log WHERE archivo = %s AND etapa = %s AND estado = 'ok' "
         "ORDER BY id DESC LIMIT 1",
-        (archivo,),
+        (archivo, etapa),
     ).fetchone()
     return fila[0] if fila else None
 
@@ -132,13 +145,9 @@ def main():
     parser = argparse.ArgumentParser(description="Descarga de taxis amarillos de NYC")
     parser.add_argument("--mes", required=True, type=mes_valido, help="AAAA-MM")
     args = parser.parse_args()
-    anio, mes = args.mes.split("-")
 
-    destino_mes = (
-        RAIZ / "data/raw/yellow" / f"year={anio}" / f"month={mes}"
-        / f"yellow_tripdata_{args.mes}.parquet"
-    )
-    destino_zonas = RAIZ / "data/raw/zones/taxi_zone_lookup.csv"
+    destino_mes = ruta_parquet(args.mes)
+    destino_zonas = RUTA_ZONAS
 
     try:
         with psycopg.connect() as con:  # lee PGHOST, PGPORT, PGDATABASE, PGUSER, PGPASSWORD

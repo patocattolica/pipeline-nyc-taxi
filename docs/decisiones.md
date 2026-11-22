@@ -13,7 +13,8 @@ como **2025-03 / 2024-03** cuando corresponde.
 | 5. Análisis de los dos meses | Hecho | `analisis/exploracion.py`, `reglas.md` |
 | 6. Contrato de esquema y comparación | Hecho; el corte del pipeline se conecta en la ingesta | `contracts/yellow_schema.yaml`, `src/pipeline/esquema.py` |
 | 7. Prueba de ingesta, midiendo tiempo y RAM | Hecho con PyAirbyte; dlt evaluado | `analisis/prueba_ingesta_resultados.md` y la sección "Herramienta de ingesta" de este archivo |
-| 8 en adelante | Pendiente | — |
+| 8. Ingesta con dlt de los dos meses y de zonas | Hecho en la rama `dlt` | `src/pipeline/ingesta.py`, `tests/test_ingesta.py` |
+| 9 en adelante | Pendiente | — |
 
 **Ramas:**
 - `master`: diseño original, con PyAirbyte.
@@ -185,10 +186,41 @@ más rápido, porque evita el paso por JSON y pandas y la doble escritura.
 - **"N/A" de zonas como texto.** El CSV de zonas se lee sin tomar "N/A" como nulo, así la
   tabla queda idéntica a la publicada por la TLC.
 
+### Ingesta implementada (`src/pipeline/ingesta.py`)
+
+Se corre con `python -m pipeline.ingesta --mes AAAA-MM [--forzar]`. Hace esto, en orden:
+
+1. Compara el esquema contra el contrato. Si hay columnas faltantes o tipos distintos,
+   registra el error en `ingestion_log` y sale con código 1. Si hay columnas nuevas, solo
+   avisa.
+2. Se saltea si el último registro `ok` de la etapa `ingesta` para ese archivo tiene el
+   mismo hash **y** la base tiene todas sus filas. `--forzar` reingiere de todos modos.
+3. Lee el Parquet de a lotes de 100.000 filas, toma solo las columnas del contrato y las
+   renombra a su nombre destino. Completa `cbd_congestion_fee` con nulos cuando el mes es
+   anterior a su `desde` y agrega `source_file`, la ruta relativa del archivo.
+4. Carga en `raw.yellow_trips` con `merge` y la estrategia `delete-insert` por
+   `source_file`, así reprocesar un mes reemplaza solo sus filas. Las zonas van a
+   `raw.taxi_zones` con `replace`.
+5. Reconcilia: las filas de ese archivo en la base tienen que ser iguales a las del
+   archivo. Si no, registra el error y sale con código 1.
+6. Registra la ingesta en `ingestion_log`, con `etapa = 'ingesta'`.
+
+`ingestion_log` tiene una columna `etapa` (`descarga` o `ingesta`), así un único registro
+de control cubre toda la Parte 1. La URL queda vacía para la ingesta.
+
+**Verificado:**
+
+| Prueba | Resultado |
+| --- | --- |
+| Ingesta de 2025-03 (`csv`) | 75 s; 4.145.257 filas |
+| Ingesta de 2024-03 (`csv`) | 73 s; 3.582.628 filas; `cbd_congestion_fee` nulo |
+| Total en `raw.yellow_trips` | 7.727.885 filas |
+| Segunda corrida de 2025-03 | Se saltea en 3 s |
+| Reproceso forzado de 2025-03 | La huella (md5 de todas las filas) de 2024 y de 2025 no cambia |
+| Reproceso de 2024-03 con `insert_values` | 199 s; huella idéntica a la de `csv` |
+| Fechas | `timestamp` sin zona horaria; la mínima de 2024, 2002-12-31 22:17:10, coincide con la del Parquet |
+| Zonas | 265 filas; 264 y 265 conservan "N/A" |
+| Tests | 4 de descarga y 4 de ingesta: decisión de salteo, renombre y columna faltante, corte por esquema y aviso por columna nueva |
+
 **Pendientes del diseño con dlt:**
-- **Dos meses en una tabla.** `replace` reemplaza la tabla entera. Para que reprocesar un
-  mes reemplace solo ese mes, usar `merge` con la estrategia `delete-insert` y una clave
-  por mes o por archivo.
 - **Medición.** Repetir la medición en la notebook de 8 GB.
-- **Idempotencia de la ingesta.** Saltear la ingesta de un mes si el hash del archivo
-  coincide con el de la última ingesta exitosa.
