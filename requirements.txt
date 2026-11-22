@@ -1,4 +1,4 @@
-airbyte==0.71.3
+dlt[postgres]==1.32.0
 dagster==1.13.30
 dagster-webserver==1.13.30
 dbt-core==1.12.7

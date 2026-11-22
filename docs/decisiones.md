@@ -151,6 +151,10 @@ Medido en la misma máquina y la misma base, con dlt 1.32.0 y el formato de carg
 | Nombres | `pulocationid` | `pu_location_id` |
 | Tipos | texto y `numeric` | los del Parquet: `integer`, `bigint`, `double precision` y `timestamptz` |
 
+**Versiones verificadas:** dlt 1.32.0 (publicada el 29/10/2026) y dagster-dlt 0.29.30
+resuelven junto con el resto del stack fijado. La rama usa su propio entorno virtual,
+`.venv-dlt`.
+
 **Por qué se elige dlt:**
 - Trabaja con Arrow de punta a punta: lee el Parquet de a lotes y no serializa cada fila
   como JSON. Eso explica la diferencia de tiempo y de RAM.
@@ -159,18 +163,32 @@ Medido en la misma máquina y la misma base, con dlt 1.32.0 y el formato de carg
   simple.
 - La cátedra lo mencionó en clase como herramienta de ingesta.
 
+**Cómo escribe cada opción en Postgres:**
+
+| | PyAirbyte | dlt `insert_values` | dlt `csv` |
+| --- | --- | --- | --- |
+| Cómo viajan los datos | Cada fila como JSON, del conector a PyAirbyte | Tablas Arrow por lotes | Tablas Arrow por lotes |
+| Archivo intermedio | JSONL, leído con pandas | Sentencias `INSERT` | CSV |
+| Comando en Postgres | `INSERT ... VALUES` a una tabla temporal y `INSERT ... SELECT` a la final | `INSERT ... VALUES` | `COPY ... FROM STDIN` |
+| 500.000 filas | unos 105 s | 35 s | 9 s |
+
+El propio código de PyAirbyte para Postgres indica que no usa `COPY` e inserta por
+valores. Con `insert_values`, dlt usa el mismo mecanismo que PyAirbyte y es igual 3 veces
+más rápido, porque evita el paso por JSON y pandas y la doble escritura.
+
+**Decisiones tomadas:**
+- **Formato de carga `csv` por defecto.** Se puede pasar a `insert_values` sin tocar el
+  código, con la variable de entorno `INGESTA_FORMATO`. Así, si se objeta el uso interno
+  de `COPY`, el cambio es inmediato.
+- **Fechas sin zona horaria.** Las columnas de fecha se configuran en dlt con
+  `timezone: False`, así la tabla cruda queda con `timestamp`, igual que el Parquet.
+- **"N/A" de zonas como texto.** El CSV de zonas se lee sin tomar "N/A" como nulo, así la
+  tabla queda idéntica a la publicada por la TLC.
+
 **Pendientes del diseño con dlt:**
 - **Dos meses en una tabla.** `replace` reemplaza la tabla entera. Para que reprocesar un
   mes reemplace solo ese mes, usar `merge` con la estrategia `delete-insert` y una clave
   por mes o por archivo.
-- **Fechas.** dlt crea `timestamptz` a partir de un timestamp sin zona horaria. Hay que
-  configurar la columna sin zona horaria, o convertirla en el staging sin correr las horas.
-- **"N/A" en zonas.** pyarrow lee "N/A" como nulo por defecto. Hay que decidir si se
-  conserva como texto.
-- **Formato de carga.** `csv` usa `COPY` por dentro, como mecanismo interno de la
-  herramienta. Si no se acepta, `insert_values` tarda unos 5 min por mes.
-- **Dagster.** Verificar que `dagster-dlt` resuelva con dagster 1.13.30.
-- **Versión.** Fijar una versión de dlt con al menos dos semanas de publicada y repetir la
-  medición en la notebook de 8 GB.
+- **Medición.** Repetir la medición en la notebook de 8 GB.
 - **Idempotencia de la ingesta.** Saltear la ingesta de un mes si el hash del archivo
   coincide con el de la última ingesta exitosa.
