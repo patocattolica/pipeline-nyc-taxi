@@ -8,6 +8,10 @@ data/
 
 # Entorno y cachés de Python
 .venv/
+.venv-*/
+
+# Credenciales de dlt
+.dlt/secrets.toml
 __pycache__/
 *.pyc
 .pytest_cache/

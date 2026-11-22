@@ -129,7 +129,7 @@ def asegurar_archivo(con, url, destino):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Ingesta de taxis amarillos de NYC")
+    parser = argparse.ArgumentParser(description="Descarga de taxis amarillos de NYC")
     parser.add_argument("--mes", required=True, type=mes_valido, help="AAAA-MM")
     args = parser.parse_args()
     anio, mes = args.mes.split("-")
@@ -146,7 +146,7 @@ def main():
             asegurar_archivo(con, URL_ZONAS, destino_zonas)
             asegurar_archivo(con, URL_MES.format(mes=args.mes), destino_mes)
     except ERRORES_DE_RED as e:
-        print(f"ERROR: la ingesta falló: {type(e).__name__}: {e}", file=sys.stderr)
+        print(f"ERROR: la descarga falló: {type(e).__name__}: {e}", file=sys.stderr)
         sys.exit(1)
 
 

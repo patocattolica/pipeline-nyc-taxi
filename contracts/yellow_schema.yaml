@@ -1,0 +1,117 @@
+# Contrato de esquema de los viajes de taxis amarillos (TLC, NYC).
+#
+# Cada entrada describe una columna:
+#   origen:       nombre tal como viene en el Parquet de la TLC
+#   destino:      nombre normalizado a snake_case
+#   tipo_parquet: tipo esperado en el Parquet (como lo informa pyarrow)
+#   tipo_destino: tipo en Postgres después del staging
+#   desde:        (opcional) primer mes AAAA-MM en que la columna existe.
+#                 Antes de ese mes, que falte es esperado y se carga como nulo.
+#                 Desde ese mes en adelante, que falte es un error.
+#
+# Una columna del Parquet que no está en este contrato se informa y no se carga.
+
+version: 1
+
+columnas:
+  - origen: VendorID
+    destino: vendor_id
+    tipo_parquet: int32
+    tipo_destino: smallint
+
+  - origen: tpep_pickup_datetime
+    destino: tpep_pickup_datetime
+    tipo_parquet: timestamp[us]
+    tipo_destino: timestamp
+
+  - origen: tpep_dropoff_datetime
+    destino: tpep_dropoff_datetime
+    tipo_parquet: timestamp[us]
+    tipo_destino: timestamp
+
+  - origen: passenger_count
+    destino: passenger_count
+    tipo_parquet: int64
+    tipo_destino: smallint
+
+  - origen: trip_distance
+    destino: trip_distance
+    tipo_parquet: double
+    tipo_destino: numeric(10,2)
+
+  - origen: RatecodeID
+    destino: ratecode_id
+    tipo_parquet: int64
+    tipo_destino: smallint
+
+  - origen: store_and_fwd_flag
+    destino: store_and_fwd_flag
+    tipo_parquet: large_string
+    tipo_destino: char(1)
+
+  - origen: PULocationID
+    destino: pu_location_id
+    tipo_parquet: int32
+    tipo_destino: smallint
+
+  - origen: DOLocationID
+    destino: do_location_id
+    tipo_parquet: int32
+    tipo_destino: smallint
+
+  - origen: payment_type
+    destino: payment_type
+    tipo_parquet: int64
+    tipo_destino: smallint
+
+  - origen: fare_amount
+    destino: fare_amount
+    tipo_parquet: double
+    tipo_destino: numeric(10,2)
+
+  - origen: extra
+    destino: extra
+    tipo_parquet: double
+    tipo_destino: numeric(10,2)
+
+  - origen: mta_tax
+    destino: mta_tax
+    tipo_parquet: double
+    tipo_destino: numeric(10,2)
+
+  - origen: tip_amount
+    destino: tip_amount
+    tipo_parquet: double
+    tipo_destino: numeric(10,2)
+
+  - origen: tolls_amount
+    destino: tolls_amount
+    tipo_parquet: double
+    tipo_destino: numeric(10,2)
+
+  - origen: improvement_surcharge
+    destino: improvement_surcharge
+    tipo_parquet: double
+    tipo_destino: numeric(10,2)
+
+  - origen: total_amount
+    destino: total_amount
+    tipo_parquet: double
+    tipo_destino: numeric(10,2)
+
+  - origen: congestion_surcharge
+    destino: congestion_surcharge
+    tipo_parquet: double
+    tipo_destino: numeric(10,2)
+
+  - origen: Airport_fee
+    destino: airport_fee
+    tipo_parquet: double
+    tipo_destino: numeric(10,2)
+
+  # Cargo por congestión del distrito central (CBD), vigente desde el 5 de enero de 2025.
+  - origen: cbd_congestion_fee
+    destino: cbd_congestion_fee
+    tipo_parquet: double
+    tipo_destino: numeric(10,2)
+    desde: "2025-01"

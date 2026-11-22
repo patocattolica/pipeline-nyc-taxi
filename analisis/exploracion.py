@@ -137,6 +137,63 @@ CONSULTAS = [
                        WHERE Zone IN ('JFK Airport', 'LaGuardia Airport'))) AS cargo_fuera_de_jfk_lga
            FROM t""",
     ),
+    (
+        "11. Histograma de duración (solo bajada > subida)",
+        """WITH d AS (SELECT date_diff('second', tpep_pickup_datetime, tpep_dropoff_datetime) / 3600.0 AS horas,
+                         trip_distance, fare_amount
+                  FROM t WHERE tpep_dropoff_datetime > tpep_pickup_datetime)
+           SELECT CASE WHEN horas <= 3 THEN 'a) hasta 3 h' WHEN horas <= 6 THEN 'b) 3 a 6 h'
+                       WHEN horas <= 12 THEN 'c) 6 a 12 h' WHEN horas <= 23 THEN 'd) 12 a 23 h'
+                       WHEN horas <= 24 THEN 'e) 23 a 24 h' ELSE 'f) más de 24 h' END AS tramo,
+                  count(*) AS n, round(median(trip_distance), 2) AS med_millas,
+                  round(median(fare_amount), 2) AS med_tarifa
+           FROM d GROUP BY 1 ORDER BY 1""",
+    ),
+    (
+        "12. R16: velocidad mayor a 80 mph, por tipo de error",
+        """WITH v AS (SELECT trip_distance,
+                         date_diff('second', tpep_pickup_datetime, tpep_dropoff_datetime) AS seg
+                  FROM t WHERE tpep_dropoff_datetime > tpep_pickup_datetime AND trip_distance > 0)
+           SELECT CASE WHEN trip_distance > 1000 THEN 'a) más de 1000 mi'
+                       WHEN seg < 60 THEN 'b) menos de 1 min' ELSE 'c) resto' END AS tipo,
+                  count(*) AS n
+           FROM v WHERE trip_distance / (seg / 3600.0) > 80 GROUP BY 1 ORDER BY 1""",
+    ),
+    (
+        "13. R05: filas de más de 500 mi que ninguna regla de rechazo agarra",
+        """WITH v AS (SELECT trip_distance,
+                         date_diff('second', tpep_pickup_datetime, tpep_dropoff_datetime) AS seg
+                  FROM t WHERE trip_distance > 500)
+           SELECT count(*) AS mas_de_500,
+                  count(*) FILTER (WHERE seg <= 0) AS r02_r03,
+                  count(*) FILTER (WHERE seg > 0 AND trip_distance / (seg / 3600.0) > 80) AS r16,
+                  count(*) FILTER (WHERE NOT (seg <= 0 OR trip_distance / (seg / 3600.0) > 80)) AS ninguna
+           FROM v""",
+    ),
+    (
+        "14. R17: más de 6 h, tarifa contra taxímetro (US$ 0,70 por minuto)",
+        """WITH d AS (SELECT date_diff('second', tpep_pickup_datetime, tpep_dropoff_datetime) / 60.0 AS minutos,
+                         fare_amount
+                  FROM t WHERE tpep_dropoff_datetime > tpep_pickup_datetime)
+           SELECT count(*) FILTER (WHERE minutos > 360) AS mas_de_6h,
+                  count(*) FILTER (WHERE minutos > 360 AND fare_amount >= 0.70 * minutos) AS cumple_070,
+                  count(*) FILTER (WHERE minutos > 360 AND fare_amount >= 0.35 * minutos) AS cumple_035,
+                  count(*) FILTER (WHERE minutos > 360 AND fare_amount < 0.35 * minutos) AS rechaza_r17,
+                  round(median(fare_amount / minutos) FILTER (WHERE minutos > 360), 3) AS med_usd_por_min
+           FROM d""",
+    ),
+    (
+        "15. Importe negativo: cuántas filas tienen gemela positiva (reverso)",
+        """SELECT count(*) AS negativas,
+                  count(*) FILTER (WHERE EXISTS (
+                      SELECT 1 FROM t p
+                      WHERE p.tpep_pickup_datetime = n.tpep_pickup_datetime
+                        AND p.tpep_dropoff_datetime = n.tpep_dropoff_datetime
+                        AND p.PULocationID = n.PULocationID AND p.DOLocationID = n.DOLocationID
+                        AND p.total_amount = -n.total_amount)) AS con_gemela,
+                  round(sum(total_amount), 0) AS suma_negativa
+           FROM t n WHERE total_amount < 0""",
+    ),
 ]
 
 
