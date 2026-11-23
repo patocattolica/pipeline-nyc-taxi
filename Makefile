@@ -1,7 +1,8 @@
 # Pipeline de taxis amarillos de NYC. Uso: make all MES=2025-03
-# Procesa MES y el mismo mes del año anterior (MES_COMP), en este orden de etapas:
-# postgres -> descarga -> ingesta -> transformacion (dbt) -> curada.
-# Make corta en el primer comando que sale con código distinto de 0.
+# Make prepara el entorno (.env, entorno virtual, Postgres y manifiesto de dbt) y Dagster
+# corre las etapas para MES y el mismo mes del año anterior, en este orden:
+# descarga -> ingesta -> transformacion (dbt build) -> curada.
+# Si una etapa falla, la corrida de Dagster falla y make sale con código distinto de 0.
 
 # Credenciales de Postgres (PGHOST, PGPORT, ...) para todos los comandos. Si no hay .env,
 # Make lo crea con la regla de abajo y vuelve a leer este archivo.
@@ -13,15 +14,20 @@ PYTHON_BASE ?= python3.11
 VENV ?= .venv-dlt
 PYTHON := $(VENV)/bin/python
 DBT := $(VENV)/bin/dbt
+DAGSTER := $(VENV)/bin/dagster
 PYTHONPATH := src
+# Estado de Dagster (corridas, logs): fuera de los datos y fuera de Git.
+DAGSTER_HOME := $(CURDIR)/dagster_home
+DEFINICIONES := -m orquestacion.definitions
 
 MES ?=
-# Mismo mes del año anterior: 2025-03 -> 2024-03. Vacío si no se pasó MES.
-MES_COMP := $(if $(MES),$(shell expr $(word 1,$(subst -, ,$(MES))) - 1)-$(word 2,$(subst -, ,$(MES))))
 
-.PHONY: all revisar-mes postgres descarga ingesta transformacion curada test conteos
+.PHONY: all revisar-mes postgres manifiesto dagster-home ui test conteos
 
-all: curada
+# El mes de comparación lo calcula Dagster (recurso periodo en src/orquestacion/definitions.py).
+all: revisar-mes postgres manifiesto dagster-home
+	$(DAGSTER) asset materialize $(DEFINICIONES) --select '*' \
+		--config-json '{"resources": {"periodo": {"config": {"mes": "$(MES)"}}}}'
 
 revisar-mes:
 	@echo "$(MES)" | grep -Eq '^[0-9]{4}-(0[1-9]|1[0-2])$$' \
@@ -39,25 +45,21 @@ $(PYTHON):
 postgres:
 	docker compose up -d --wait
 
-# "| $(PYTHON)": hace falta que el entorno exista, pero no se rehace si cambia su fecha.
-descarga: revisar-mes postgres | $(PYTHON)
-	$(PYTHON) -m pipeline.descarga --mes $(MES)
-	$(PYTHON) -m pipeline.descarga --mes $(MES_COMP)
+# dagster-dbt lee target/manifest.json para armar un asset por modelo. dbt parse no se
+# conecta a la base y tarda unos segundos; se corre siempre, así refleja los últimos cambios.
+manifiesto: | $(PYTHON)
+	$(DBT) parse --quiet
 
-ingesta: descarga
-	$(PYTHON) -m pipeline.ingesta --mes $(MES)
-	$(PYTHON) -m pipeline.ingesta --mes $(MES_COMP)
+# Un dagster.yaml vacío le confirma a Dagster que guarde todo en DAGSTER_HOME (si falta, avisa).
+dagster-home:
+	@mkdir -p $(DAGSTER_HOME)
+	@touch $(DAGSTER_HOME)/dagster.yaml
 
-# Staging, reglas de calidad, cuarentena, reporte, modelo estrella y preguntas, con sus tests.
-# Si la reconciliación de conteos falla, dbt sale con error y no se escribe la capa curada.
-transformacion: ingesta
-	$(DBT) build --vars '{mes: "$(MES)"}'
+# Interfaz de Dagster en http://localhost:3000, con el historial de corridas de make all.
+ui: postgres manifiesto dagster-home
+	$(DAGSTER) dev $(DEFINICIONES)
 
-curada: transformacion
-	$(PYTHON) -m pipeline.curada --mes $(MES)
-	$(PYTHON) -m pipeline.curada --mes $(MES_COMP)
-
-test: | $(PYTHON)
+test: manifiesto
 	$(PYTHON) -m pytest -q
 
 # Conteos para comparar dos corridas: reporte de calidad, filas del modelo y huella de la curada.
