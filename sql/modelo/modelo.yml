@@ -1,0 +1,94 @@
+version: 2
+
+models:
+  - name: dim_zone
+    description: >
+      Dimensión de zonas. Granularidad: una fila por zona de la TLC (265, con 264 y 265
+      incluidas). La clave es location_id, la misma que usan los viajes.
+    columns:
+      - name: location_id
+        data_tests:
+          - unique
+          - not_null
+
+  - name: dim_date
+    description: >
+      Dimensión de fechas. Granularidad: una fila por día de cada mes cargado (todos los
+      días del mes, haya viajes o no). La clave es fecha.
+    columns:
+      - name: fecha
+        data_tests:
+          - unique
+          - not_null
+      - name: dia_semana
+        description: Día de la semana ISO (1 = lunes, 7 = domingo), igual que en trips_curados.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [1, 2, 3, 4, 5, 6, 7]
+                quote: false
+
+  - name: fact_trips
+    description: >
+      Tabla de hechos. Granularidad: una fila por viaje aceptado (sin cuarentena). Claves
+      hacia dim_date (fecha) y dim_zone (pu_location_id, do_location_id).
+    columns:
+      - name: trip_id
+        data_tests:
+          - unique
+          - not_null
+      - name: fecha
+        description: Fecha de la subida.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: fecha
+      - name: pu_location_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_zone')
+                field: location_id
+      - name: do_location_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_zone')
+                field: location_id
+      - name: duracion_confiable
+        description: >
+          Falso si el viaje tiene R18 (menos de 1 minuto). Las métricas de duración y
+          velocidad se calculan solo con los verdaderos; las de viajes e ingreso, con todos.
+        data_tests:
+          - not_null
+
+  - name: agg_zone_hour
+    description: >
+      Viajes, ingreso total y duración media por zona de origen, fecha y hora. Granularidad:
+      una fila por pu_location_id, fecha y hora con al menos un viaje (las horas sin viajes
+      no aparecen). Su total cuadra con fact_trips (tests/dbt/agg_zone_hour_cuadra_con_fact.sql).
+    columns:
+      - name: pu_location_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_zone')
+                field: location_id
+      - name: fecha
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: fecha
+      - name: ingreso_total
+        description: Suma de total_amount de todos los viajes, R18 incluidos.
+      - name: duracion_media_min
+        description: >
+          Promedio de duracion_min de los viajes sin R18. Nulo si todos los viajes del grupo
+          duraron menos de 1 minuto.
+      - name: viajes_con_duracion
+        description: Viajes que entran en duracion_media_min; sirve para ponderar al agregar horas.

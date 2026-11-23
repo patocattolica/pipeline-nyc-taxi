@@ -17,3 +17,8 @@ models:
       +materialized: view
     curada:
       +materialized: view
+    modelo:
+      +materialized: table
+    # Las preguntas leen el mes asignado de la variable mes: --vars '{mes: "2025-03"}'.
+    preguntas:
+      +materialized: table

@@ -18,7 +18,8 @@ como **2025-03 / 2024-03** cuando corresponde.
 | 10. dbt: reglas, aceptadas, cuarentena y test de una regla | Hecho | `seeds/reglas_calidad.csv`, `sql/calidad/` |
 | 11. Reconciliación y reporte de calidad | Hecho | `sql/calidad/reporte_calidad_*.sql`, `tests/dbt/reconciliacion_conteos.sql` |
 | 12. Capa curada en Parquet | Hecho | `sql/curada/trips_curados.sql`, `src/pipeline/curada.py`, `tests/test_curada.py` |
-| 13 en adelante | Pendiente | — |
+| 13. Modelo estrella, tabla agregada y las seis preguntas | Hecho | `sql/modelo/`, `sql/preguntas/`, `RESULTADOS.md` |
+| 14 en adelante | Pendiente | — |
 
 **Ramas:**
 - `master`: diseño original, con PyAirbyte.
@@ -455,3 +456,65 @@ positiva y muy corta: unos 35.000 viajes aceptados por mes de menos de 1 minuto.
 - `dbt test`: 21 tests pasan. Huellas nuevas de la capa curada: 2024 `db3c1e4d…`, 2025
   `eb25f5cf…` (cambian porque la columna `flags` cambió).
 
+
+## Modelo y preguntas (Parte 5, paso 13)
+
+### Modelo estrella (`sql/modelo/`, tablas)
+
+| Tabla | Granularidad | Clave | Origen |
+| --- | --- | --- | --- |
+| `dim_zone` | una fila por zona de la TLC (265, con 264 y 265) | `location_id` | `stg_taxi_zones` |
+| `dim_date` | una fila por día de cada mes cargado, haya viajes o no | `fecha` | meses de `source_file` |
+| `fact_trips` | una fila por viaje aceptado | `trip_id` | `trips_curados` |
+| `agg_zone_hour` | una fila por zona de origen, fecha y hora con al menos un viaje | las tres columnas | `fact_trips` |
+
+- **`dim_zone` no filtra 264 ni 265:** R10 es advertencia y hay viajes aceptados que las usan;
+  sin ellas fallaría el test de relación de `fact_trips`.
+- **`dim_date` saca los meses de la ruta del archivo** y no de `pickup_at`, porque las filas de
+  R01 traen fechas de otros meses (como 2002-12). `nombre_dia` sale de un arreglo y no de
+  `to_char`, que depende del idioma del servidor.
+- **`fact_trips` es angosta:** claves, atributos del viaje, medidas y `flags`. Los nombres de
+  zona viven en `dim_zone` y los atributos de la fecha en `dim_date`. Agrega
+  `duracion_confiable` (falso si el viaje tiene R18), así la regla del paso 12 se aplica con
+  una columna y no buscando texto en `flags`.
+- **`agg_zone_hour`:** `viajes` e `ingreso_total` (suma de `total_amount`) cuentan todos los
+  viajes; `duracion_media_min` promedia solo los de `duracion_confiable` (nula si todos son
+  R18). `viajes_con_duracion` permite ponderar al agregar varias horas, en lugar de promediar
+  promedios.
+- **Tablas completas, no incrementales:** con dos meses se reconstruyen en segundos y son
+  idempotentes sin lógica extra.
+- **Tests:** claves únicas y no nulas; `relationships` de `fact_trips` y `agg_zone_hour` hacia
+  las dos dimensiones; `tests/dbt/agg_zone_hour_cuadra_con_fact.sql` falla si la suma de
+  viajes o de ingreso de la agregada difiere de `fact_trips`.
+
+### Preguntas (`sql/preguntas/`, una tabla por pregunta)
+
+- **El mes asignado llega como variable de dbt:** `--vars '{mes: "2025-03"}'`. La comparación
+  es el mismo mes del año anterior. No tiene valor por defecto: sin la variable, las preguntas
+  no compilan (`Required var 'mes' not found`) y el resto del proyecto sigue funcionando.
+- **`tests/dbt/meses_de_preguntas_cargados.sql`** falla si alguno de los dos meses no está en
+  `dim_date`; sin ese control, las preguntas darían tablas vacías sin avisar.
+- Cada pregunta repite la CTE `meses`, así cada archivo se lee solo y se copia tal cual a
+  `RESULTADOS.md`. Leen las dimensiones para separar los meses (`dim_date`) y para los nombres
+  de zona (`dim_zone`).
+- **c:** solo entran zonas con al menos 100 viajes en el mes. Sin mínimo, encabezan Rikers
+  Island (2 viajes) y Arden Heights (1) al 100 %; con cualquier mínimo entre 3 y 35.000 el
+  top 5 es el mismo.
+- **d:** se muestran el promedio del porcentaje por viaje y el total de propinas sobre el total
+  de tarifas, porque hay porcentajes de hasta 700.000 % con tarifas de centavos.
+- **e:** los aeropuertos se identifican por `zone` (`JFK Airport`, `LaGuardia Airport`). Un
+  viaje entre los dos cuenta en cada uno y una sola vez en el total.
+
+**Verificado:**
+
+| Prueba | Resultado |
+| --- | --- |
+| `fact_trips` | 7.585.903 filas (= aceptadas), 3.534.033 / 4.051.870 por año; 67.649 con R18; 11 s; 1.212 MB |
+| `agg_zone_hour` | 211.390 filas; `sum(viajes)` y `sum(ingreso_total)` iguales a `fact_trips`; 3,7 s; 16 MB |
+| `dim_date` | 62 días; el 1/3/2024 viernes y el 1/3/2025 sábado |
+| Preguntas b, c y e | Iguales a consultas independientes sobre `fact_trips` con los ID de zona |
+| Sin `mes` / con `mes` 2025-04 | No compila / el test de meses falla con código 1 |
+| `dbt build --vars '{mes: "2025-03"}'` | 60 de 60, 393 s |
+| Dos corridas del modelo y las preguntas | Las 10 tablas con la misma huella md5 |
+
+**Disco.** `fact_trips` suma 1,2 GB; la base queda en unos 8,9 GB.
