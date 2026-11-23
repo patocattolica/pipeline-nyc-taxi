@@ -17,7 +17,8 @@ como **2025-03 / 2024-03** cuando corresponde.
 | 9. dbt: sources y staging | Hecho | `dbt_project.yml`, `profiles.yml`, `sql/staging/` |
 | 10. dbt: reglas, aceptadas, cuarentena y test de una regla | Hecho | `seeds/reglas_calidad.csv`, `sql/calidad/` |
 | 11. Reconciliación y reporte de calidad | Hecho | `sql/calidad/reporte_calidad_*.sql`, `tests/dbt/reconciliacion_conteos.sql` |
-| 12 en adelante | Pendiente | — |
+| 12. Capa curada en Parquet | Hecho | `sql/curada/trips_curados.sql`, `src/pipeline/curada.py`, `tests/test_curada.py` |
+| 13 en adelante | Pendiente | — |
 
 **Ramas:**
 - `master`: diseño original, con PyAirbyte.
@@ -381,3 +382,60 @@ diseño original. Medirlo en la notebook de 8 GB y, si hace falta, optimizarlo.
 
 Los conteos por regla de `reporte_calidad_reglas` son los de `reglas.md`. Los dos reportes
 se construyen en 6 s. `dbt test`: 20 tests pasan; pytest: 8.
+
+## Capa curada (Parte 4, paso 12)
+
+- **Las columnas derivadas se calculan en dbt** (`sql/curada/trips_curados.sql`, vista sobre
+  `trips_aceptados`): quedan junto al resto del SQL y tienen tests. DuckDB solo lee y
+  escribe. La vista agrega:
+  - `duracion_min`, `velocidad_mph` (nula si la duración no es positiva; en las aceptadas no
+    pasa, porque R02 y R03 rechazan), `fecha`, `hora` y `dia_semana` de la subida (ISO:
+    1 = lunes, 7 = domingo).
+  - `propina_pct` = 100 × `tip_amount` / `fare_amount`, nula si la tarifa no es positiva.
+  - `pu_borough`, `pu_zone`, `do_borough` y `do_zone`, de `stg_taxi_zones`.
+  - Las derivadas son `numeric(10,2)`, como la distancia y los importes. El cast va afuera
+    del `CASE`: adentro, Postgres pierde los decimales fijados y el Parquet las recibía como
+    `double`.
+- **La propina solo es interpretable con tarjeta.** En las aceptadas, la propina promedio es
+  US$ 4,28 con tarjeta (`payment_type` 1) y US$ 0,00 en efectivo (2): el taxímetro no
+  registra la propina en efectivo. Hay valores extremos (hasta 700.000 %) cuando la tarifa
+  es de centavos. Las preguntas sobre propina tienen que filtrar por tarjeta.
+- **`src/pipeline/curada.py --mes AAAA-MM`** conecta DuckDB a Postgres con la extensión
+  `postgres` (`ATTACH ''`: libpq toma las variables `PG*` del entorno, en solo lectura),
+  filtra la vista por el `source_file` del mes y escribe
+  `data/curated/yellow/year=AAAA/month=MM/trips.parquet`:
+  - **Nombre de archivo fijo** y escritura a un `.tmp` que se renombra al final: reprocesar
+    un mes reemplaza solo su archivo y, si algo falla, el anterior queda intacto.
+  - **`ORDER BY pickup_at, trip_id`**: el orden fijo hace que la misma entrada dé siempre el
+    mismo archivo, byte a byte.
+  - **`year` y `month` no van dentro del archivo**: salen de la ruta (estilo Hive). DuckDB
+    los agrega al leer con `hive_partitioning`.
+  - **Reconciliación**: las filas del Parquet escrito tienen que ser las `filas_aceptadas`
+    del mes en `reporte_calidad_mes`. Si no, sale con código 1.
+  - La extensión `postgres` de DuckDB se descarga de internet la primera vez (`INSTALL`) y
+    queda en `~/.duckdb/extensions`.
+- **Memoria de DuckDB.** `memory_limit` acota los datos que maneja DuckDB, no el proceso
+  entero. Medido con 2025-03:
+
+  | `memory_limit` | Hilos | RAM pico | Tiempo |
+  | --- | --- | --- | --- |
+  | 1,5 GB | todos (12) | 2.227 MiB | 16 s |
+  | 1 GB | 4 | 1.385 MiB | 18 s |
+  | 1 GB | 2 | 1.346 MiB | 18 s |
+  | **512 MB** | **2** | **738 MiB** | **22 s** |
+
+  Se eligió 512 MB y 2 hilos. El archivo salió idéntico (mismo sha256) con las cuatro
+  configuraciones. Lo que no entra en memoria va a `data/tmp/duckdb`.
+- **Test** (`tests/test_curada.py`): con una tabla de DuckDB en memoria escribe dos meses,
+  cambia los datos de uno y lo reprocesa. Verifica que el otro archivo tiene el mismo
+  sha256 y que no quedan temporales.
+
+**Verificado:**
+
+| Prueba | Resultado |
+| --- | --- |
+| 2025-03 | 4.051.870 filas (= aceptadas), 22 s, 152 MB |
+| 2024-03 | 3.534.033 filas (= aceptadas), 19 s, 131 MB |
+| Reproceso de 2025-03 y luego de 2024-03 | Los dos archivos conservan su sha256 (2024 `f61f8171…`, 2025 `66e6e9ff…`); los conteos por partición no cambian |
+| Tipos en el Parquet | Importes, distancia y derivadas `DECIMAL(10,2)`; códigos `SMALLINT`; `fecha` `DATE` |
+| Tests | `trips_curados`: `trip_id` único y no nulo, `dia_semana` entre 1 y 7. pytest: 9 |

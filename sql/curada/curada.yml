@@ -1,0 +1,23 @@
+version: 2
+
+models:
+  - name: trips_curados
+    description: >
+      Viajes aceptados con duración, velocidad, fecha, hora, día de la semana, porcentaje de
+      propina y barrio y zona de origen y destino. Es la entrada de la capa curada en Parquet.
+    columns:
+      - name: trip_id
+        data_tests:
+          - unique
+          - not_null
+      - name: dia_semana
+        description: Día de la semana ISO de la subida (1 = lunes, 7 = domingo).
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [1, 2, 3, 4, 5, 6, 7]
+                quote: false
+      - name: propina_pct
+        description: >
+          100 × tip_amount / fare_amount; nulo si la tarifa no es positiva. Solo es
+          interpretable con tarjeta (payment_type 1): la propina en efectivo no se registra.
