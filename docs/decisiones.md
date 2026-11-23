@@ -16,7 +16,8 @@ como **2025-03 / 2024-03** cuando corresponde.
 | 8. Ingesta con dlt de los dos meses y de zonas | Hecho en la rama `dlt` | `src/pipeline/ingesta.py`, `tests/test_ingesta.py` |
 | 9. dbt: sources y staging | Hecho | `dbt_project.yml`, `profiles.yml`, `sql/staging/` |
 | 10. dbt: reglas, aceptadas, cuarentena y test de una regla | Hecho | `seeds/reglas_calidad.csv`, `sql/calidad/` |
-| 11 en adelante | Pendiente | — |
+| 11. Reconciliación y reporte de calidad | Hecho | `sql/calidad/reporte_calidad_*.sql`, `tests/dbt/reconciliacion_conteos.sql` |
+| 12 en adelante | Pendiente | — |
 
 **Ramas:**
 - `master`: diseño original, con PyAirbyte.
@@ -347,3 +348,36 @@ tabla intermedia de dlt y 1,96 GB de staging. Faltan las tablas de calidad y el 
 
 **Pendiente:** `int_calidad` tarda unos 4 minutos, el doble que la prueba sintética del
 diseño original. Medirlo en la notebook de 8 GB y, si hace falta, optimizarlo.
+
+### Reporte de calidad y reconciliación (paso 11)
+
+- **`reporte_calidad_mes` (tabla)**: una fila por mes con filas leídas, aceptadas, en
+  cuarentena, el porcentaje en cuarentena y la `diferencia` (leídas − aceptadas −
+  cuarentena). Las **leídas salen de `raw.yellow_trips`**, no del staging: la tabla cruda ya
+  se reconcilió contra el Parquet en la ingesta, así que el control compara contra una
+  fuente independiente de lo que hace dbt. La cadena completa queda: Parquet = crudo (en la
+  ingesta) y crudo = aceptadas + cuarentena (en dbt).
+- **`reporte_calidad_reglas` (tabla)**: filas por regla y por mes, con la severidad y el
+  porcentaje sobre las leídas. Cruza los meses con el catálogo, así aparecen las 17 reglas
+  aunque alguna no tenga casos (0).
+- **La reconciliación corta el pipeline**: `tests/dbt/reconciliacion_conteos.sql` es un
+  test de dbt que devuelve los meses con `diferencia` distinta de 0. Si devuelve alguna
+  fila, `dbt test` (o `dbt build`) falla y sale con código distinto de 0, y `make` se
+  detiene.
+- **Test con datos sintéticos** (`reconciliacion_detecta_filas_perdidas`, unit test): un mes
+  con 3 leídas, 2 aceptadas y 1 en cuarentena da diferencia 0; otro con 2 leídas y solo 1
+  aceptada da diferencia 1. Es el test obligatorio de reconciliación de conteos.
+- **`test-paths: ["tests"]`**: los tests de datos de dbt están en `tests/dbt/`. dbt lee solo
+  los `.sql` de `tests/` y pytest solo los `.py`. No pueden ir dentro de `sql/`: al ser la
+  carpeta de modelos, dbt los tomaría como modelos (pasó en la primera prueba y creó una
+  vista `analytics.reconciliacion_conteos`).
+
+**Verificado:**
+
+| Mes | Leídas | Aceptadas | Cuarentena | % cuarentena | Diferencia |
+| --- | --- | --- | --- | --- | --- |
+| 2024-03 | 3.582.628 | 3.534.033 | 48.595 | 1,36 | 0 |
+| 2025-03 | 4.145.257 | 4.051.870 | 93.387 | 2,25 | 0 |
+
+Los conteos por regla de `reporte_calidad_reglas` son los de `reglas.md`. Los dos reportes
+se construyen en 6 s. `dbt test`: 20 tests pasan; pytest: 8.

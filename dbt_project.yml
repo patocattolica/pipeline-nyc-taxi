@@ -5,6 +5,8 @@ profile: taxis_nyc
 
 model-paths: ["sql"]
 seed-paths: ["seeds"]
+# dbt lee solo los .sql de tests/ (en tests/dbt/); pytest, solo los .py.
+test-paths: ["tests"]
 clean-targets: ["target", "dbt_packages"]
 
 models:

@@ -32,6 +32,19 @@ models:
           - unique
           - not_null
 
+  - name: reporte_calidad_mes
+    description: >
+      Por mes: filas leídas (de la tabla cruda), aceptadas, en cuarentena y la diferencia, que
+      tiene que ser 0 (lo controla el test tests/dbt/reconciliacion_conteos.sql).
+    columns:
+      - name: mes
+        data_tests:
+          - unique
+          - not_null
+
+  - name: reporte_calidad_reglas
+    description: Filas por regla y por mes, con las 17 reglas aunque no tengan casos.
+
 unit_tests:
   # Datos sintéticos, justo a cada lado de los umbrales de las dos reglas propias.
   - name: reglas_propias_r16_r17_en_el_borde
@@ -96,3 +109,27 @@ unit_tests:
     expect:
       rows:
         - {trip_id: b, reglas_rechazo: "", flags: R16}
+
+  # Reconciliación sobre datos sintéticos: un mes que cuadra y otro al que le falta una fila.
+  - name: reconciliacion_detecta_filas_perdidas
+    model: reporte_calidad_mes
+    given:
+      - input: source('raw', 'yellow_trips')
+        rows:
+          - {source_file: data/raw/yellow/year=2025/month=03/a.parquet}
+          - {source_file: data/raw/yellow/year=2025/month=03/a.parquet}
+          - {source_file: data/raw/yellow/year=2025/month=03/a.parquet}
+          - {source_file: data/raw/yellow/year=2024/month=03/b.parquet}
+          - {source_file: data/raw/yellow/year=2024/month=03/b.parquet}
+      - input: ref('trips_aceptados')
+        rows:
+          - {source_file: data/raw/yellow/year=2025/month=03/a.parquet}
+          - {source_file: data/raw/yellow/year=2025/month=03/a.parquet}
+          - {source_file: data/raw/yellow/year=2024/month=03/b.parquet}
+      - input: ref('trips_cuarentena')
+        rows:
+          - {source_file: data/raw/yellow/year=2025/month=03/a.parquet}
+    expect:
+      rows:
+        - {mes: "2025-03", filas_leidas: 3, filas_aceptadas: 2, filas_cuarentena: 1, diferencia: 0}
+        - {mes: "2024-03", filas_leidas: 2, filas_aceptadas: 1, filas_cuarentena: 0, diferencia: 1}
