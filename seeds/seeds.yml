@@ -1,0 +1,25 @@
+version: 2
+
+seeds:
+  - name: reglas_calidad
+    description: >
+      Catálogo de reglas de calidad (decisiones y evidencia en reglas.md). Los umbrales y las
+      severidades se leen de acá: cambiarlos es editar este archivo y volver a correr dbt.
+    config:
+      column_types:
+        id: text
+        descripcion: text
+        severidad: text
+        umbral: numeric
+        umbral_2: numeric
+        unidad: text
+    columns:
+      - name: id
+        data_tests:
+          - unique
+          - not_null
+      - name: severidad
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["rechazo", "advertencia"]

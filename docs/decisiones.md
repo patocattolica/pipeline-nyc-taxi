@@ -15,7 +15,8 @@ como **2025-03 / 2024-03** cuando corresponde.
 | 7. Prueba de ingesta, midiendo tiempo y RAM | Hecho con PyAirbyte; dlt evaluado | `analisis/prueba_ingesta_resultados.md` y la sección "Herramienta de ingesta" de este archivo |
 | 8. Ingesta con dlt de los dos meses y de zonas | Hecho en la rama `dlt` | `src/pipeline/ingesta.py`, `tests/test_ingesta.py` |
 | 9. dbt: sources y staging | Hecho | `dbt_project.yml`, `profiles.yml`, `sql/staging/` |
-| 10 en adelante | Pendiente | — |
+| 10. dbt: reglas, aceptadas, cuarentena y test de una regla | Hecho | `seeds/reglas_calidad.csv`, `sql/calidad/` |
+| 11 en adelante | Pendiente | — |
 
 **Ramas:**
 - `master`: diseño original, con PyAirbyte.
@@ -53,6 +54,14 @@ como **2025-03 / 2024-03** cuando corresponde.
 | `shared_buffers` | 384 MB | Una cuarta parte del tope del contenedor |
 | `work_mem` | 32 MB | Ordenamientos y joins de las reglas sin desbordar la memoria |
 | `maintenance_work_mem` | 128 MB | Creación de índices |
+
+### Memoria compartida del contenedor (`shm_size`)
+
+Docker le da al contenedor 64 MB de `/dev/shm` por defecto. Postgres usa esa memoria para
+que varios procesos colaboren en una misma consulta (consultas en paralelo). Un join entre
+dos tablas de 7,7 millones de filas la agotó: `could not resize shared memory segment ...
+No space left on device`. Se fijó `shm_size: 256m` en `compose.yaml`. Recrear el contenedor
+(`docker compose up -d`) no toca los datos, que viven en el volumen `pgdata`.
 
 ## Descarga (Parte 1)
 
@@ -288,3 +297,53 @@ El staging solo renombra y convierte tipos: no limpia ni filtra.
 
 **Disco.** Con el staging, Postgres ocupa unos 5,6 GB: 2,8 GB de crudo, 0,86 GB de la
 tabla intermedia de dlt y 1,96 GB de staging. Faltan las tablas de calidad y el modelo.
+
+### Calidad (paso 10)
+
+- **El catálogo es un seed** (`seeds/reglas_calidad.csv`): `id`, `descripcion`,
+  `severidad`, `umbral`, `umbral_2` y `unidad`. Los umbrales (R05: 500 mi; R16: 80 mph;
+  R17: 360 min y US$ 0,35 por minuto) y las severidades se leen de ahí. Cambiar un umbral o
+  pasar una regla de advertencia a rechazo es editar el CSV y correr `dbt seed` y
+  `dbt run`, sin tocar el SQL. Tiene tests: `id` único y no nulo, y `severidad` solo
+  `rechazo` o `advertencia`.
+- **`int_calidad` (tabla)** evalúa las 17 reglas sobre cada viaje del staging. Cada regla
+  devuelve su id si se cumple; después se reparten según la severidad del catálogo en
+  `reglas_rechazo` y `flags`. Se materializa como tabla porque es el cálculo más pesado y
+  así se hace una vez.
+  - El mes del archivo, para R01, sale de la ruta en `source_file` (`year=AAAA/month=MM`).
+  - R09 cruza origen y destino con `stg_taxi_zones`.
+  - R16 calcula la velocidad solo si la duración y la distancia son positivas: Postgres no
+    garantiza el orden en que evalúa un `AND`, así que un `CASE` evita dividir por cero.
+- **`reglas_rechazo` y `flags` son texto separado por comas** (`R06,R16`), vacío si no
+  hay reglas. Se probó primero con listas (`text[]`), pero dbt-postgres lee el tipo de esas
+  columnas como `ARRAY` y los unit tests no pueden comparar valores. El texto, además, se
+  lee directo en el reporte. Para contar por regla: `unnest(string_to_array(flags, ','))`.
+- **`trips_aceptados` (vista)**: `reglas_rechazo = ''`. Es vista para no duplicar 2 GB.
+- **`trips_cuarentena` (tabla)**: `reglas_rechazo <> ''`. Guarda la fila del staging (que
+  solo convierte tipos, así que es la fila del archivo), su `source_file`, las reglas de
+  rechazo violadas y las advertencias que también cumple.
+- **Test de reglas con datos sintéticos**: dos *unit tests* de dbt sobre `int_calidad`
+  (`sql/calidad/calidad.yml`), con filas inventadas y sin leer los datos reales:
+  - `reglas_propias_r16_r17_en_el_borde`: 80 mph exactos no rechaza y 80,08 sí; 361 min
+    con US$ 126,35 (0,35 × 361) no rechaza y con un centavo menos sí; 360 min exactos no
+    superan la duración máxima.
+  - `severidad_se_lee_del_catalogo`: con R16 como advertencia en el catálogo, el mismo
+    viaje pasa de rechazo a flags. Este test encontró un bug: si ninguna regla del catálogo
+    era de rechazo, `array_agg` daba nulo y las reglas violadas se perdían. Se corrigió con
+    `coalesce(..., '{}')`.
+
+**Verificado:**
+
+| Prueba | Resultado |
+| --- | --- |
+| Conteo por regla | Igual a la columna "Filas" de `reglas.md` en las 17 reglas (R09, R11, R13 y R14 dan 0) |
+| Aceptadas + cuarentena | 7.585.903 + 141.982 = 7.727.885, sin filas en las dos |
+| Cuarentena por mes | 2025: 93.387; 2024: 48.595 |
+| Combinaciones más frecuentes | R06: 112.942; R03: 23.202; R17: 3.271; R16: 2.258; R02: 198; R01: 55 |
+| Tiempo | `int_calidad` 206–238 s; `trips_cuarentena` 13–14 s |
+| Tamaño | `int_calidad` 2,0 GB; `trips_cuarentena` 37 MB |
+| Dos corridas | Huella de `trip_id`, `reglas_rechazo` y `flags` idéntica (`e0d63d051bc442675574041210bfc142`) |
+| `dbt test` | 16 tests pasan, los 2 unit tests incluidos |
+
+**Pendiente:** `int_calidad` tarda unos 4 minutos, el doble que la prueba sintética del
+diseño original. Medirlo en la notebook de 8 GB y, si hace falta, optimizarlo.

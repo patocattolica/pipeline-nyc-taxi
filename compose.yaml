@@ -4,6 +4,9 @@ services:
     container_name: taxi_postgres
     restart: unless-stopped
     mem_limit: 1536m
+    # Memoria compartida para las consultas en paralelo. Docker da 64 MB por defecto y un join
+    # entre tablas de millones de filas la agota ("could not resize shared memory segment").
+    shm_size: 256m
     environment:
       POSTGRES_DB: ${PGDATABASE}
       POSTGRES_USER: ${PGUSER}

@@ -1,0 +1,98 @@
+version: 2
+
+models:
+  - name: int_calidad
+    description: >
+      Cada viaje del staging con las reglas que viola: reglas_rechazo (severidad rechazo) y
+      flags (advertencias). Los umbrales y las severidades salen de reglas_calidad.
+    columns:
+      - name: trip_id
+        data_tests:
+          - unique
+          - not_null
+      - name: reglas_rechazo
+        description: Ids de las reglas de rechazo que viola, en orden y separados por comas; vacío si no viola ninguna.
+        data_tests:
+          - not_null
+      - name: flags
+        description: Ids de las advertencias que cumple, en orden y separados por comas; vacío si no cumple ninguna.
+        data_tests:
+          - not_null
+
+  - name: trips_aceptados
+    description: Viajes sin reglas de rechazo; las advertencias quedan en flags.
+
+  - name: trips_cuarentena
+    description: >
+      Viajes con al menos una regla de rechazo: la fila del staging, source_file y las reglas
+      violadas.
+    columns:
+      - name: trip_id
+        data_tests:
+          - unique
+          - not_null
+
+unit_tests:
+  # Datos sintéticos, justo a cada lado de los umbrales de las dos reglas propias.
+  - name: reglas_propias_r16_r17_en_el_borde
+    model: int_calidad
+    given:
+      - input: ref('stg_yellow_trips')
+        rows:
+          # R16: 10 mi en 7,5 min son 80 mph exactos (no supera el umbral); 10,01 mi sí.
+          - {trip_id: a, source_file: data/raw/yellow/year=2025/month=03/x.parquet, dup_n: 1,
+             pickup_at: "2025-03-10 10:00:00", dropoff_at: "2025-03-10 10:07:30",
+             trip_distance: 10.00, fare_amount: 30, total_amount: 35, passenger_count: 1,
+             pu_location_id: 100, do_location_id: 100, payment_type: 1, ratecode_id: 1}
+          - {trip_id: b, source_file: data/raw/yellow/year=2025/month=03/x.parquet, dup_n: 1,
+             pickup_at: "2025-03-10 10:00:00", dropoff_at: "2025-03-10 10:07:30",
+             trip_distance: 10.01, fare_amount: 30, total_amount: 35, passenger_count: 1,
+             pu_location_id: 100, do_location_id: 100, payment_type: 1, ratecode_id: 1}
+          # R17: 361 min con tarifa 0,35 × 361 = 126,35 cumple; un centavo menos no.
+          - {trip_id: c, source_file: data/raw/yellow/year=2025/month=03/x.parquet, dup_n: 1,
+             pickup_at: "2025-03-10 10:00:00", dropoff_at: "2025-03-10 16:01:00",
+             trip_distance: 20, fare_amount: 126.35, total_amount: 130, passenger_count: 1,
+             pu_location_id: 100, do_location_id: 100, payment_type: 1, ratecode_id: 1}
+          - {trip_id: d, source_file: data/raw/yellow/year=2025/month=03/x.parquet, dup_n: 1,
+             pickup_at: "2025-03-10 10:00:00", dropoff_at: "2025-03-10 16:01:00",
+             trip_distance: 20, fare_amount: 126.34, total_amount: 130, passenger_count: 1,
+             pu_location_id: 100, do_location_id: 100, payment_type: 1, ratecode_id: 1}
+          # R17: 360 min exactos no superan la duración máxima, aunque la tarifa sea baja.
+          - {trip_id: e, source_file: data/raw/yellow/year=2025/month=03/x.parquet, dup_n: 1,
+             pickup_at: "2025-03-10 10:00:00", dropoff_at: "2025-03-10 16:00:00",
+             trip_distance: 20, fare_amount: 1, total_amount: 5, passenger_count: 1,
+             pu_location_id: 100, do_location_id: 100, payment_type: 1, ratecode_id: 1}
+      - input: ref('stg_taxi_zones')
+        rows:
+          - {location_id: 100}
+      - input: ref('reglas_calidad')
+        rows:
+          - {id: R16, severidad: rechazo, umbral: 80}
+          - {id: R17, severidad: rechazo, umbral: 360, umbral_2: 0.35}
+    expect:
+      rows:
+        - {trip_id: a, reglas_rechazo: "", flags: ""}
+        - {trip_id: b, reglas_rechazo: R16, flags: ""}
+        - {trip_id: c, reglas_rechazo: "", flags: ""}
+        - {trip_id: d, reglas_rechazo: R17, flags: ""}
+        - {trip_id: e, reglas_rechazo: "", flags: ""}
+
+  # La severidad sale del catálogo: con R16 como advertencia, el mismo viaje pasa a flags.
+  - name: severidad_se_lee_del_catalogo
+    model: int_calidad
+    given:
+      - input: ref('stg_yellow_trips')
+        rows:
+          - {trip_id: b, source_file: data/raw/yellow/year=2025/month=03/x.parquet, dup_n: 1,
+             pickup_at: "2025-03-10 10:00:00", dropoff_at: "2025-03-10 10:07:30",
+             trip_distance: 10.01, fare_amount: 30, total_amount: 35, passenger_count: 1,
+             pu_location_id: 100, do_location_id: 100, payment_type: 1, ratecode_id: 1}
+      - input: ref('stg_taxi_zones')
+        rows:
+          - {location_id: 100}
+      - input: ref('reglas_calidad')
+        rows:
+          - {id: R16, severidad: advertencia, umbral: 80}
+    expect:
+      rows:
+        - {trip_id: b, reglas_rechazo: "", flags: R16}

@@ -11,3 +11,5 @@ models:
   taxis_nyc:
     staging:
       +materialized: view
+    calidad:
+      +materialized: view
