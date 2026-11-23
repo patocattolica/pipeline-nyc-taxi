@@ -1,5 +1,6 @@
 agate==1.9.1
 alembic==1.20.1
+annotated-doc==0.0.7
 annotated-types==0.8.0
 antlr4-python3-runtime==4.13.2
 anyio==4.16.0
@@ -14,6 +15,7 @@ coloredlogs==14.0
 croniter==7.0.0
 daff==1.4.2
 dagster==1.13.30
+dagster-dbt==0.29.30
 dagster-graphql==1.13.30
 dagster-pipes==1.13.30
 dagster-shared==1.13.30
@@ -78,6 +80,7 @@ pluggy==1.7.0
 propcache==0.5.4
 protobuf==6.33.6
 psycopg==3.3.9
+psycopg-binary==3.3.9
 psycopg2-binary==2.9.13
 pyarrow==21.0.0
 pydantic==2.14.4
@@ -100,12 +103,15 @@ rich-argparse==1.8.0
 rpds-py==2026.9.1
 semver==3.1.2
 setuptools==84.2.1
+shellingham==1.5.4
 simplejson==4.3.0
 six==1.17.0
 smmap==5.0.3
 snowplow-tracker==1.1.0
 sqlalchemy==2.1.9
 sqlglot==30.33.0
+sqlglotc==30.33.0
+sqlglotrs==0.13.0
 sqlparse==0.6.1
 starlette==1.10.0
 structlog==26.1.0
@@ -116,6 +122,7 @@ tomli==2.5.0
 tomlkit==0.15.2
 toposort==1.10
 tqdm==4.70.1
+typer==0.29.2
 typing-extensions==4.16.0
 typing-inspection==0.4.5
 tzdata==2026.6
