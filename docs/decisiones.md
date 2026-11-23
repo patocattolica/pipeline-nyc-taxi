@@ -19,7 +19,8 @@ como **2025-03 / 2024-03** cuando corresponde.
 | 11. Reconciliación y reporte de calidad | Hecho | `sql/calidad/reporte_calidad_*.sql`, `tests/dbt/reconciliacion_conteos.sql` |
 | 12. Capa curada en Parquet | Hecho | `sql/curada/trips_curados.sql`, `src/pipeline/curada.py`, `tests/test_curada.py` |
 | 13. Modelo estrella, tabla agregada y las seis preguntas | Hecho | `sql/modelo/`, `sql/preguntas/`, `RESULTADOS.md` |
-| 14 en adelante | Pendiente | — |
+| 14. `make all` de punta a punta, dos veces, con los mismos conteos | Hecho | `Makefile`, `.env.example`, `.dlt/config.toml` |
+| 15 en adelante | Pendiente | — |
 
 **Ramas:**
 - `master`: diseño original, con PyAirbyte.
@@ -237,9 +238,10 @@ de control cubre toda la Parte 1. La URL queda vacía para la ingesta.
 
 **Pendientes del diseño con dlt:**
 - **Medición.** Repetir la medición en la notebook de 8 GB.
-- **Tabla intermedia de dlt.** El merge deja `raw_staging.yellow_trips` con el último mes
-  cargado (3.582.628 filas, 859 MB). No afecta los datos, pero ocupa disco: hay que
-  vaciarla después de cada carga.
+- **Tabla intermedia de dlt (resuelto en el paso 14).** El merge dejaba
+  `raw_staging.yellow_trips` con el último mes cargado (3.582.628 filas, 859 MB). Ahora dlt
+  la vacía al terminar cada carga, con `truncate_staging_dataset = true` en
+  `.dlt/config.toml`.
 
 ## Transformación con dbt
 
@@ -518,3 +520,51 @@ positiva y muy corta: unos 35.000 viajes aceptados por mes de menos de 1 minuto.
 | Dos corridas del modelo y las preguntas | Las 10 tablas con la misma huella md5 |
 
 **Disco.** `fact_trips` suma 1,2 GB; la base queda en unos 8,9 GB.
+
+## Comando único (paso 14)
+
+`make all MES=2025-03` corre todo para el mes asignado y el mismo mes del año anterior
+(`MES_COMP`, calculado en el `Makefile`):
+
+```text
+revisar-mes, postgres, entorno -> descarga -> ingesta -> transformacion (dbt build) -> curada
+```
+
+- **Make corta en el primer comando con código distinto de 0.** Como los scripts y dbt ya
+  salen con error ante fallas (reintentos agotados, contrato, reconciliación), el pipeline
+  se detiene donde falla: si la reconciliación de dbt no cierra, no se escribe la curada.
+- **`MES` es obligatorio y se valida** (`AAAA-MM`, mes de 01 a 12) antes de ejecutar nada.
+- **`postgres`**: `docker compose up -d --wait` levanta el contenedor y espera el
+  healthcheck; si ya está corriendo, no hace nada.
+- **Clon nuevo con un solo comando:**
+  - Si no hay `.env`, Make copia `.env.example` y avisa. Las credenciales del ejemplo son
+    solo para el Postgres del contenedor, que escucha en 127.0.0.1. `.env.example` también
+    documenta `INGESTA_FORMATO`.
+  - Si no existe el entorno virtual, Make lo crea con `python3.11 -m venv` e instala
+    `requirements.lock`. El intérprete se cambia con `PYTHON_BASE=...`. Requisitos para
+    quien clone: Docker, Make y Python 3.11.
+- **`transformacion` es un solo `dbt build --vars '{mes: "..."}'`**: corre el seed, los
+  modelos y los tests en orden de dependencias, así que no hace falta un `dbt seed` aparte.
+- **`make conteos MES=...`** muestra el reporte de calidad por mes, las filas de `fact_trips`
+  por mes y el sha256 de cada archivo curado: es lo que se compara entre dos corridas.
+- **`make test`** corre pytest. Los tests de dbt ya corren dentro de `make all`.
+- **Tabla intermedia de dlt:** `.dlt/config.toml` activa `truncate_staging_dataset`. Al
+  reingerir 2024-03, `raw_staging.yellow_trips` pasó de 859 MB a 8 kB y `raw` conservó sus
+  filas.
+
+**Verificado:**
+
+| Prueba | Resultado |
+| --- | --- |
+| `make all` sin `MES` o con `MES=2025-13` | Corta con el mensaje, antes de ejecutar nada |
+| Sin `.env` (carpeta aparte) | Copia `.env.example`, avisa y sigue; la segunda vez no hace nada |
+| Entorno nuevo desde `requirements.lock` (carpeta aparte, Python 3.11) | 43 s; importa dlt 1.32.0, dbt 1.12.7, duckdb 1.4.3; la segunda vez no se rehace |
+| `make all MES=2025-03`, corrida 1 | Código 0, 507 s (dbt 457 s, 60 de 60) |
+| `make all MES=2025-03`, corrida 2 | Código 0, 493 s (dbt 441 s, 60 de 60) |
+| Descarga e ingesta en las dos corridas | Se saltean por hash, en segundos |
+| Conteos antes, después de la corrida 1 y después de la 2 | Idénticos: leídas 3.582.628 / 4.145.257; aceptadas 3.534.033 / 4.051.870; cuarentena 48.595 / 93.387; diferencia 0 |
+| Archivos curados | Mismo sha256 en las tres tomas: 2024 `db3c1e4d…`, 2025 `eb25f5cf…` |
+| `make test` | 9 pasan |
+
+Casi todo el tiempo de una corrida es `dbt build`, y dentro de él `int_calidad` (unos 4
+minutos). Falta medir tiempo y pico de RAM en la notebook de 8 GB (paso 15).

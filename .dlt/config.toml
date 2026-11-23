@@ -1,0 +1,5 @@
+# Configuración de dlt (la lee al correr desde la raíz del repo).
+[load]
+# Vacía raw_staging (la tabla intermedia del merge) al terminar cada carga. Sin esto, queda
+# con una copia del último mes cargado (unos 860 MB).
+truncate_staging_dataset = true
