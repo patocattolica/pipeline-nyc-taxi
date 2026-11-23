@@ -3,7 +3,7 @@
 Registro de lo hecho y de las decisiones tomadas, con su justificación. Las cifras se dan
 como **2025-03 / 2024-03** cuando corresponde.
 
-## Estado al 22/11/2026
+## Estado al 23/11/2026
 
 | Paso | Estado | Dónde |
 | --- | --- | --- |
@@ -14,7 +14,8 @@ como **2025-03 / 2024-03** cuando corresponde.
 | 6. Contrato de esquema y comparación | Hecho; el corte del pipeline se conecta en la ingesta | `contracts/yellow_schema.yaml`, `src/pipeline/esquema.py` |
 | 7. Prueba de ingesta, midiendo tiempo y RAM | Hecho con PyAirbyte; dlt evaluado | `analisis/prueba_ingesta_resultados.md` y la sección "Herramienta de ingesta" de este archivo |
 | 8. Ingesta con dlt de los dos meses y de zonas | Hecho en la rama `dlt` | `src/pipeline/ingesta.py`, `tests/test_ingesta.py` |
-| 9 en adelante | Pendiente | — |
+| 9. dbt: sources y staging | Hecho | `dbt_project.yml`, `profiles.yml`, `sql/staging/` |
+| 10 en adelante | Pendiente | — |
 
 **Ramas:**
 - `master`: diseño original, con PyAirbyte.
@@ -224,3 +225,66 @@ de control cubre toda la Parte 1. La URL queda vacía para la ingesta.
 
 **Pendientes del diseño con dlt:**
 - **Medición.** Repetir la medición en la notebook de 8 GB.
+- **Tabla intermedia de dlt.** El merge deja `raw_staging.yellow_trips` con el último mes
+  cargado (3.582.628 filas, 859 MB). No afecta los datos, pero ocupa disco: hay que
+  vaciarla después de cada carga.
+
+## Transformación con dbt
+
+### Proyecto (paso 9)
+
+- **`dbt_project.yml` y `profiles.yml` en la raíz.** dbt busca `profiles.yml` primero en
+  la carpeta desde donde se corre, así que alcanza con correrlo desde la raíz del repo. Los
+  modelos están en `sql/` y los seeds en `seeds/`, como pide la estructura objetivo.
+- **Credenciales.** `profiles.yml` lee cada dato de conexión con `env_var('PG...')`. No
+  tiene ningún valor escrito, por eso se puede subir. dbt no lee el `.env`: las variables
+  tienen que estar cargadas en el entorno (`set -a; . ./.env; set +a`).
+- **Esquemas.** dbt escribe todo en `analytics`. `raw` es de la ingesta: dbt solo lo lee,
+  a través de las sources declaradas en `sql/staging/sources.yml`.
+- **`threads: 2`.** Pocos modelos en paralelo, por el tope de memoria del contenedor.
+- **`.user.yml`.** Es un identificador anónimo que crea dbt. Está en el `.gitignore`.
+
+Se corre así: `set -a; . ./.env; set +a; .venv-dlt/bin/dbt run` (o `dbt test`).
+
+### Staging (paso 9)
+
+El staging solo renombra y convierte tipos: no limpia ni filtra.
+
+- **`stg_taxi_zones`** (vista). `location_id` pasa a `smallint`. Entran las 265 zonas, con
+  "N/A" incluido. Tiene tests `unique` y `not_null` sobre `location_id`.
+- **`stg_yellow_trips`** (tabla). Se materializa como tabla porque las reglas lo leen
+  varias veces y con una vista el md5 de 7,7 millones de filas se recalcularía en cada
+  lectura.
+  - **Tipos destino.** `smallint` para códigos, pasajeros y zonas; `numeric(10,2)` para
+    distancia e importes; `char(1)` para el flag; las fechas quedan `timestamp` y se
+    renombran a `pickup_at` y `dropoff_at`. Antes de fijarlos se midieron los máximos: la
+    distancia más grande es 320.136,29 y el importe más grande 46.269,44, que entran en
+    `numeric(10,2)` (hasta 99.999.999,99).
+  - **`row_hash` = `md5(t::text)`.** Es el texto de la fila cruda completa, `source_file`
+    incluido. Se calcula sobre los valores crudos, antes de convertir tipos: si se calculara
+    después de redondear a dos decimales, dos filas que difieren en el tercer decimal
+    quedarían como duplicadas sin serlo. No se usa `concat_ws` porque saltea los nulos y
+    `(NULL, 1)` y `(1, NULL)` darían el mismo texto; en el texto de la fila un nulo queda
+    como un campo vacío en su lugar.
+  - **`dup_n` = `row_number() over (partition by row_hash)`.** Numera las copias de una
+    misma fila. No necesita orden: las copias son idénticas, así que cualquier orden da el
+    mismo resultado. `dup_n` > 1 es un duplicado exacto (R11).
+  - **`trip_id` = `md5(row_hash || '-' || dup_n)`.** El guion evita que la concatenación
+    sea ambigua.
+
+**Verificado:**
+
+| Prueba | Resultado |
+| --- | --- |
+| `dbt debug` | Encuentra los dos archivos y conecta solo con las variables `PG*` |
+| `stg_taxi_zones` | 265 filas, 265 `location_id` distintos, `smallint`; pasan `unique` y `not_null` |
+| Filas de `stg_yellow_trips` | 7.727.885, las mismas que `raw.yellow_trips` |
+| `trip_id` | 7.727.885 distintos; pasan `unique` y `not_null` |
+| Duplicados exactos | 0, igual que en el análisis (R11 en `reglas.md`) |
+| Por mes | 2024: 3.582.628 filas, `cbd_congestion_fee` nulo en todas; 2025: 4.145.257, con valor en todas |
+| Tiempo | 74 s |
+| Tamaño | 1,96 GB |
+| Segunda corrida | Huella de los `trip_id` idéntica (`e28af7cade13988a7cafecdf7b7e0bc9`) |
+
+**Disco.** Con el staging, Postgres ocupa unos 5,6 GB: 2,8 GB de crudo, 0,86 GB de la
+tabla intermedia de dlt y 1,96 GB de staging. Faltan las tablas de calidad y el modelo.
