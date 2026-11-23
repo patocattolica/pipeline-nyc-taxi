@@ -20,12 +20,15 @@ como **2025-03 / 2024-03** cuando corresponde.
 | 12. Capa curada en Parquet | Hecho | `sql/curada/trips_curados.sql`, `src/pipeline/curada.py`, `tests/test_curada.py` |
 | 13. Modelo estrella, tabla agregada y las seis preguntas | Hecho | `sql/modelo/`, `sql/preguntas/`, `RESULTADOS.md` |
 | 14. `make all` de punta a punta, dos veces, con los mismos conteos | Hecho | `Makefile`, `.env.example`, `.dlt/config.toml` |
-| 15 en adelante | Pendiente | — |
+| 16. Orquestación con Dagster | Hecho en la rama `dagster` | `src/orquestacion/definitions.py`, `Makefile`, `tests/test_orquestacion.py` |
+| 15 y 17 en adelante | Pendiente | — |
 
 **Ramas:**
 - `master`: diseño original, con PyAirbyte.
 - `dlt`: el mismo proyecto, con dlt como herramienta de ingesta. Se abrió a partir de las
   mediciones de la sección "Herramienta de ingesta".
+- `dagster`: sale de `dlt` y agrega la orquestación con Dagster (paso 16). Se integra con un
+  pull request.
 
 ## Términos
 
@@ -568,3 +571,138 @@ revisar-mes, postgres, entorno -> descarga -> ingesta -> transformacion (dbt bui
 
 Casi todo el tiempo de una corrida es `dbt build`, y dentro de él `int_calidad` (unos 4
 minutos). Falta medir tiempo y pico de RAM en la notebook de 8 GB (paso 15).
+
+## Orquestación con Dagster (paso 16)
+
+`make all MES=2025-03` prepara el entorno y le pasa la corrida a Dagster:
+
+```text
+make: revisar-mes, postgres, entorno, dbt parse -> dagster asset materialize --select '*'
+Dagster: descarga -> raw/yellow_trips y raw/taxi_zones -> modelos de dbt -> curada
+```
+
+Las definiciones están en `src/orquestacion/definitions.py`.
+
+### Qué hace Make y qué hace Dagster
+
+- **Make prepara; Dagster ejecuta.** Make sigue creando `.env` y el entorno virtual, levanta
+  Postgres (`docker compose up -d --wait`) y genera el manifiesto de dbt. Levantar el contenedor
+  es infraestructura y no un dato, por eso no es un asset. Las cuatro etapas de datos las corre
+  Dagster, en una sola corrida.
+- **Make ya no encadena las etapas.** Se sacaron los objetivos `descarga`, `ingesta`,
+  `transformacion` y `curada` y el cálculo de `MES_COMP`. Para correr una sola etapa se usa
+  Dagster: `dagster asset materialize -m orquestacion.definitions --select descarga
+  --config-json ...`.
+- **`dagster asset materialize` y no `dagster job execute`.** En Dagster 1.13, `job execute` solo
+  recibe la configuración en un archivo (`-c`) y no como texto. `asset materialize` acepta
+  `--config-json` y, si la corrida falla, sale con código 1, igual que `job execute`. Avisa que
+  está reemplazado por `dg launch`, pero `dg` es otro paquete (`dagster-dg-cli`) que no está en
+  el stack fijado.
+- **`dbt parse` en cada `make all`.** dagster-dbt arma un asset por modelo leyendo
+  `target/manifest.json`, que no está en Git. `dbt parse` no se conecta a la base y tarda unos
+  segundos. Se corre siempre, así el manifiesto no queda viejo si cambia un modelo. Se verificó
+  que compila sin la variable `mes`: al parsear, dbt toma como nula una variable que falta y la
+  exige recién al compilar.
+- **`DAGSTER_HOME=dagster_home/`.** Dagster guarda ahí las corridas y sus logs, que están en el
+  `.gitignore`. Make crea un `dagster.yaml` vacío: sin él, Dagster avisa en cada corrida que usa
+  la configuración por defecto. El run id y las fechas de corrida quedan solo ahí, nunca en los datos.
+- **`make ui`** levanta la interfaz de Dagster (`dagster dev`) en http://localhost:3000, con el
+  grafo de assets y el historial de las corridas de `make all`.
+
+### Cómo se pasa el mes
+
+Se evaluaron tres opciones:
+
+| Opción | A favor | En contra |
+| --- | --- | --- |
+| **Configuración de la corrida (elegida)** | Una corrida y un comando; el mes se valida y el de comparación se calcula en un solo lugar | La interfaz agrupa por corrida, no por mes |
+| Particiones mensuales (`2024-03` y `2025-03` por separado) | Cada mes materializado por separado en la interfaz | dbt reconstruye tablas completas y las preguntas necesitan los dos meses a la vez, así que no puede ser una partición. Como Dagster no mezcla particiones distintas en una corrida, serían unas 5 corridas encadenadas por Make. Además, la dependencia con el año anterior pide una `PartitionMapping` propia |
+| Partición con el mes asignado como clave | Historial por mes asignado | La partición `2025-03` también escribiría 2024-03: una partición dejaría de ser una porción de datos separada de las demás |
+
+- **El recurso `periodo`** (`Periodo`, un `ConfigurableResource`) tiene un solo campo, `mes`. Se
+  pasa al lanzar la corrida:
+  `--config-json '{"resources": {"periodo": {"config": {"mes": "2025-03"}}}}'`.
+  Se usa un recurso y no la configuración de cada asset para no repetir el mes cuatro veces.
+- **Valida el mes al iniciar la corrida** (`setup_for_execution`), con la misma expresión que
+  `revisar-mes`. Un mes inválido corta antes de ejecutar cualquier asset.
+- **`mes_comp`** es el mismo mes del año anterior (2025-03 → 2024-03). Cada asset procesa los
+  dos meses en el mismo orden que el Makefile del paso 14: primero el asignado, después el de
+  comparación.
+- **El mes no entra en los datos por Dagster.** Llega a los scripts como `--mes` y a dbt como
+  `--vars`, igual que antes. Por eso cada salida sigue dependiendo solo del mes, del archivo
+  crudo, del contrato y de las reglas.
+
+### Assets
+
+| Asset | Qué ejecuta | Depende de |
+| --- | --- | --- |
+| `descarga` | `python -m pipeline.descarga --mes X`, para los dos meses | — |
+| `raw/yellow_trips`, `raw/taxi_zones` | `python -m pipeline.ingesta --mes X`, para los dos meses | `descarga` |
+| modelos de dbt (19: seed, staging, calidad, curada, modelo y preguntas) | `dbt build --vars '{"mes": "..."}'` | `raw/yellow_trips` y `raw/taxi_zones` |
+| `curada` | `python -m pipeline.curada --mes X`, para los dos meses | `trips_curados` y `reporte_calidad_mes` |
+
+- **Las etapas propias corren como subproceso**, con el Python del mismo entorno. No se cambió
+  ninguna línea de `descarga.py`, `ingesta.py` ni `curada.py`: siguen haciendo su validación de
+  contrato, el salteo por hash, la reconciliación y el registro en `ingestion_log`. Si el script
+  sale con código distinto de 0, el asset lanza `dagster.Failure` con ese código.
+  - Además, como cada etapa es su propio proceso, la memoria de dlt y de DuckDB se libera al
+    terminar.
+- **No se usa dagster-dlt.** Su `@dlt_assets` ejecuta el pipeline de dlt directamente y
+  saltearía la lógica propia de `ingesta.py` (contrato, salteo por hash, reconciliación,
+  `ingestion_log`). Usarlo obligaba a partir el script en piezas, y no se agregó la dependencia
+  para no tener un paquete sin uso.
+- **Las claves `raw/yellow_trips` y `raw/taxi_zones` coinciden con las sources de dbt.**
+  dagster-dbt les pone a las sources la clave `[source, tabla]`, así que el staging queda
+  conectado a la ingesta sin traductor y el grafo muestra la cadena completa.
+- **dbt con dagster-dbt** (`@dbt_assets`): es un solo `dbt build`, como en el paso 14. Los 38
+  tests de datos y los 3 unit tests corren dentro. Los tests sobre un modelo aparecen en Dagster
+  como asset checks; los singulares que cruzan varios modelos (la reconciliación, por ejemplo)
+  aparecen como observaciones.
+- **Si falla un test de dbt, la corrida falla.** dbt sale con código 1, dagster-dbt lanza un
+  error, `curada` no se ejecuta, la corrida queda fallida y `make` sale con código distinto de 0.
+- **Metadata.** `descarga` y `curada` registran, para cada mes, las filas y el sha256 del
+  archivo, así la interfaz muestra la huella de cada corrida.
+- **Un paso por vez.** `in_process_executor` en `Definitions`: los pasos corren de a uno y en el
+  mismo proceso, para toda corrida (`make all`, el job `pipeline_mes` y la interfaz).
+
+### Dependencias
+
+- **`dagster-dbt==0.29.30`** se agregó a `requirements.txt`. El lock se regeneró sobre el entorno
+  ya instalado desde el lock anterior, así pip no movió ninguna versión. Solo se agregaron
+  `dagster-dbt` y sus dependencias nuevas: `annotated-doc`, `shellingham`, `sqlglotc`,
+  `sqlglotrs` y `typer`.
+- **`psycopg[binary]==3.3.9`** (agrega `psycopg-binary==3.3.9`, la misma versión). Sin la
+  variante binaria, psycopg necesita la librería `libpq` instalada en el sistema. En una máquina
+  sin ella, `pipeline.descarga` fallaba al importarse, con o sin Dagster. Así se mantiene que
+  quien clone solo necesita Docker, Make y Python 3.11. dbt ya usaba `psycopg2-binary` por el
+  mismo motivo.
+
+### Tests (`tests/test_orquestacion.py`)
+
+No necesitan Postgres. Sí necesitan el manifiesto de dbt: `make test` corre `dbt parse` antes
+de pytest y, si se corre pytest suelto sin el manifiesto, el archivo se saltea con un aviso.
+
+- El mes de comparación es el mismo mes del año anterior, enero incluido.
+- Un mes inválido (`2025-13`, `2025-3`, vacío) corta antes de ejecutar.
+- Orden de los assets: `descarga` → `raw/*` → staging, y `curada` después de `trips_curados` y
+  `reporte_calidad_mes`.
+- El job usa `in_process_executor`.
+- Una etapa que sale con código 1 hace fallar el asset.
+
+**Verificado:**
+
+| Prueba | Resultado |
+| --- | --- |
+| `make all MES=2025-03`, corrida 1 (sin datos, sin contenedor y con un entorno nuevo) | Código 0, 14 min 2 s: descarga 1 min 48 s, ingesta 2 min 1 s, dbt 8 min 55 s (60 de 60), curada 1 min 3 s |
+| `make all MES=2025-03`, corrida 2 | Código 0, 11 min 26 s: descarga e ingesta se saltean por hash (1 s y 6 s), dbt 9 min 59 s (60 de 60), curada 1 min 7 s |
+| Conteos después de cada corrida | Idénticos y los mismos del paso 14: leídas 3.582.628 / 4.145.257; aceptadas 3.534.033 / 4.051.870; cuarentena 48.595 / 93.387; diferencia 0 |
+| Archivos curados | Mismo sha256 en las dos corridas y el mismo del paso 14: 2024 `db3c1e4d…`, 2025 `eb25f5cf…` |
+| Reconciliación forzada a fallar (`diferencia <> 1`, cambio temporal revertido) | Falla `reconciliacion_conteos` (2 filas); dbt da `ERROR=1`; Dagster marca `modelos_dbt` como fallido y no ejecuta `curada`; `make` sale con código 2; los archivos curados no se tocan |
+| Mes inválido pasado directo a Dagster (`2025-13`) | Falla al iniciar el recurso `periodo`, antes de ejecutar cualquier asset; código 1 |
+| `dagster definitions validate` | Pasa |
+| `make test` | 19 pasan: 9 de antes y 10 de orquestación |
+| RAM pico (`/usr/bin/time`, el proceso más grande, sin contar Postgres) | 704 MiB en la corrida 1 y 1.090 MiB en la corrida 2, en una máquina de 12 CPU y 14 GiB |
+
+Las corridas por Dagster tardan lo mismo que con Make: casi todo el tiempo sigue siendo
+`dbt build`, y dentro de él `int_calidad`. Falta medir tiempo y pico de RAM en la notebook de
+8 GB (paso 15).
