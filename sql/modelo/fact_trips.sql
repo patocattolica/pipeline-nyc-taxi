@@ -26,5 +26,7 @@ select
     propina_pct,
     flags,
     -- Las métricas de duración y velocidad excluyen los viajes de menos de 1 minuto (R18).
-    not ('R18' = any(string_to_array(flags, ','))) as duracion_confiable
+    not ('R18' = any(string_to_array(flags, ','))) as duracion_confiable,
+    -- Los promedios de fare_amount excluyen las tarifas negativas con total positivo (R19).
+    not ('R19' = any(string_to_array(flags, ','))) as tarifa_confiable
 from {{ ref('trips_curados') }}

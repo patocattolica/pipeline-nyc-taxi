@@ -1,5 +1,6 @@
 -- f. Variación de viajes totales y de tarifa media entre el mes de comparación y el asignado.
--- Cuenta los viajes aceptados (fact_trips); la tarifa es fare_amount.
+-- Cuenta los viajes aceptados (fact_trips); la tarifa es fare_amount. La tarifa media excluye
+-- los viajes con R19 (tarifa negativa con total positivo); los viajes se cuentan todos.
 with meses as (
     select 'asignado' as periodo, to_date('{{ var("mes") }}', 'YYYY-MM') as inicio
     union all
@@ -11,7 +12,7 @@ por_mes as (
         m.periodo,
         m.inicio,
         count(*) as viajes,
-        avg(f.fare_amount) as tarifa_media
+        avg(f.fare_amount) filter (where f.tarifa_confiable) as tarifa_media
     from {{ ref('fact_trips') }} as f
     join {{ ref('dim_date') }} as d on d.fecha = f.fecha
     join meses as m on d.anio = extract(year from m.inicio) and d.mes = extract(month from m.inicio)
