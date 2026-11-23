@@ -52,8 +52,8 @@ manifiesto: | $(PYTHON)
 
 # Un dagster.yaml vacío le confirma a Dagster que guarde todo en DAGSTER_HOME (si falta, avisa).
 dagster-home:
-	@mkdir -p $(DAGSTER_HOME)
-	@touch $(DAGSTER_HOME)/dagster.yaml
+	@mkdir -p "$(DAGSTER_HOME)"
+	@touch "$(DAGSTER_HOME)/dagster.yaml"
 
 # Interfaz de Dagster en http://localhost:3000, con el historial de corridas de make all.
 ui: postgres manifiesto dagster-home
