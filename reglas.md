@@ -41,6 +41,7 @@ Análisis de `yellow_tripdata_2025-03` (4.145.257 filas) y `yellow_tripdata_2024
 | R16 | Velocidad imposible (propia) | duración > 0, distancia > 0 y distancia / horas > 80 | Rechazo | 1.050 / 1.241 | p999 = 46 / 48 mph. La velocidad máxima legal en NY es de 65 mph y entre 65 y 80 casi no hay filas. |
 | R17 | Duración larga sin tarifa acorde (propia) | duración > 360 min y `fare_amount` < 0,35 × minutos | Rechazo | 1.364 / 1.922 | El taxímetro cobra al menos US$ 0,70 por minuto. Por encima de 6 h, la mediana es de US$ 0,011 / 0,012 por minuto. |
 | R18 | Duración menor al mínimo (propia) | duración > 0 y < 60 s | Advertencia | 43.216 / 39.531 | Por debajo de 1 minuto la tarifa mediana es la bajada de bandera (US$ 3) o una tarifa fija: no son viajes medidos. Se cobraron, así que no se rechazan. |
+| R19 | Tarifa negativa con total positivo (propia) | `fare_amount` < 0 y `total_amount` > 0 | Advertencia | 140.446 / 14.295 | Todas son del proveedor 2 con `payment_type` 0 (Flex Fare). El total se cobró, así que el viaje existió, pero la tarifa negativa no es un precio: los promedios de `fare_amount` las excluyen. |
 
 ## Evidencia
 
@@ -107,6 +108,20 @@ pero ninguna regla miraba la duración positiva y muy corta. Viajes aceptados co
 - De las 43.216 / 39.531 filas con R18, 35.135 / 32.514 quedan aceptadas (las demás tienen
   otra regla de rechazo, sobre todo R06), y 28.640 / 26.656 también tienen distancia 0
   (R04).
+
+**R19: tarifa negativa con total positivo.** R06 rechaza el total negativo, pero ninguna
+regla miraba la tarifa negativa cuando el total es positivo. Hay 140.446 / 14.295 casos, y
+140.403 / 14.291 quedan aceptados (los demás tienen otra regla de rechazo).
+
+- **Todos son del proveedor 2 con `payment_type` 0** (Flex Fare). En 2025 suman US$ −598.836
+  de tarifa y US$ 633.431 de total en las aceptadas. Son casi 10 veces más que en 2024.
+- **Advertencia y no rechazo**, con el mismo criterio que R18: el total es positivo, así que
+  el viaje existió y se cobró. Rechazarlas sacaría ingreso real de las preguntas de dinero.
+- **Cómo se usa.** Los promedios de `fare_amount` excluyen las filas con R19 (preguntas e y
+  f), y los conteos y el ingreso las incluyen. En la pregunta f, la tarifa media de 2025 pasa
+  de US$ 18,47 a 19,29 y la de 2024, de 19,17 a 19,26: la baja de tarifa que mostraba el mes
+  venía de estas filas.
+- El umbral (0) está en el catálogo: la regla compara la tarifa y el total contra ese valor.
 
 ### Distancia
 

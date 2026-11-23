@@ -122,6 +122,43 @@ unit_tests:
       rows:
         - {trip_id: b, reglas_rechazo: "", flags: R16}
 
+  # R19: tarifa negativa con total positivo es advertencia; con total en 0 no aplica y con
+  # total negativo el viaje lo rechaza R06 (sin R19). La tarifa en 0 no es negativa.
+  - name: r19_tarifa_negativa_con_total_positivo
+    model: int_calidad
+    given:
+      - input: ref('stg_yellow_trips')
+        rows:
+          - {trip_id: h, source_file: data/raw/yellow/year=2025/month=03/x.parquet, dup_n: 1,
+             pickup_at: "2025-03-10 10:00:00", dropoff_at: "2025-03-10 10:15:00",
+             trip_distance: 2, fare_amount: -1, total_amount: 5, passenger_count: 1,
+             pu_location_id: 100, do_location_id: 100, payment_type: 0, ratecode_id: 1}
+          - {trip_id: i, source_file: data/raw/yellow/year=2025/month=03/x.parquet, dup_n: 1,
+             pickup_at: "2025-03-10 10:00:00", dropoff_at: "2025-03-10 10:15:00",
+             trip_distance: 2, fare_amount: 0, total_amount: 5, passenger_count: 1,
+             pu_location_id: 100, do_location_id: 100, payment_type: 0, ratecode_id: 1}
+          - {trip_id: j, source_file: data/raw/yellow/year=2025/month=03/x.parquet, dup_n: 1,
+             pickup_at: "2025-03-10 10:00:00", dropoff_at: "2025-03-10 10:15:00",
+             trip_distance: 2, fare_amount: -1, total_amount: 0, passenger_count: 1,
+             pu_location_id: 100, do_location_id: 100, payment_type: 0, ratecode_id: 1}
+          - {trip_id: k, source_file: data/raw/yellow/year=2025/month=03/x.parquet, dup_n: 1,
+             pickup_at: "2025-03-10 10:00:00", dropoff_at: "2025-03-10 10:15:00",
+             trip_distance: 2, fare_amount: -1, total_amount: -5, passenger_count: 1,
+             pu_location_id: 100, do_location_id: 100, payment_type: 0, ratecode_id: 1}
+      - input: ref('stg_taxi_zones')
+        rows:
+          - {location_id: 100}
+      - input: ref('reglas_calidad')
+        rows:
+          - {id: R06, severidad: rechazo}
+          - {id: R19, severidad: advertencia, umbral: 0}
+    expect:
+      rows:
+        - {trip_id: h, reglas_rechazo: "", flags: R19}
+        - {trip_id: i, reglas_rechazo: "", flags: ""}
+        - {trip_id: j, reglas_rechazo: "", flags: ""}
+        - {trip_id: k, reglas_rechazo: R06, flags: ""}
+
   # Reconciliación sobre datos sintéticos: un mes que cuadra y otro al que le falta una fila.
   - name: reconciliacion_detecta_filas_perdidas
     model: reporte_calidad_mes
