@@ -1,0 +1,27 @@
+version: 2
+
+models:
+  - name: stg_taxi_zones
+    description: Zonas con location_id como smallint. Sin filtros, entran las 265.
+    columns:
+      - name: location_id
+        data_tests:
+          - unique
+          - not_null
+
+  - name: stg_yellow_trips
+    description: >
+      Viajes de los dos meses con los tipos destino y la clave del viaje. Una fila por fila
+      cruda: no se filtra nada.
+    columns:
+      - name: trip_id
+        description: md5 de row_hash y dup_n. Igual en todas las corridas.
+        data_tests:
+          - unique
+          - not_null
+      - name: row_hash
+        description: md5 del texto de la fila cruda completa, source_file incluido.
+        data_tests:
+          - not_null
+      - name: dup_n
+        description: Número de copia entre filas idénticas; mayor a 1 es un duplicado exacto (R11).

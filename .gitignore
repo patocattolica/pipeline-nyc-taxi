@@ -34,3 +34,6 @@ referencia/
 .vscode/
 .idea/
 .DS_Store
+
+# dbt: id anónimo de telemetría
+.user.yml

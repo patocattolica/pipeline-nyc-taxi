@@ -1,0 +1,12 @@
+taxis_nyc:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: "{{ env_var('PGHOST') }}"
+      port: "{{ env_var('PGPORT') | int }}"
+      dbname: "{{ env_var('PGDATABASE') }}"
+      user: "{{ env_var('PGUSER') }}"
+      password: "{{ env_var('PGPASSWORD') }}"
+      schema: analytics
+      threads: 2

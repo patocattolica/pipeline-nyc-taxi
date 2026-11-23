@@ -1,0 +1,11 @@
+version: 2
+
+sources:
+  - name: raw
+    description: Tablas que carga la ingesta (src/pipeline/ingesta.py). dbt solo las lee.
+    schema: raw
+    tables:
+      - name: yellow_trips
+        description: Viajes de los dos meses, con los tipos del Parquet y el archivo de origen.
+      - name: taxi_zones
+        description: Las 265 zonas de la TLC, tal como vienen en el CSV.

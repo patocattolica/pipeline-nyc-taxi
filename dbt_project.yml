@@ -1,0 +1,13 @@
+name: taxis_nyc
+version: "1.0.0"
+config-version: 2
+profile: taxis_nyc
+
+model-paths: ["sql"]
+seed-paths: ["seeds"]
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  taxis_nyc:
+    staging:
+      +materialized: view
