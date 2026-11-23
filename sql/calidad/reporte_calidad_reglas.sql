@@ -1,7 +1,7 @@
 {{ config(materialized='table') }}
 
 -- Cantidad de filas por regla y por mes. Incluye las reglas sin casos (con 0), para que el
--- reporte muestre las 17 aunque un mes no viole alguna.
+-- reporte muestre todas aunque un mes no viole alguna.
 with violaciones as (
     select
         source_file,

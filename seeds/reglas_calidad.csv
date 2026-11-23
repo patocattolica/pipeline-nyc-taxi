@@ -16,3 +16,4 @@ R14,payment_type fuera de catálogo,advertencia,,,
 R15,Pago no cobrado (tipos 3; 4 y 6),advertencia,,,
 R16,Velocidad imposible,rechazo,80,,millas por hora
 R17,Duración larga sin tarifa acorde,rechazo,360,0.35,minutos; dólares por minuto
+R18,Duración menor al mínimo,advertencia,60,,segundos

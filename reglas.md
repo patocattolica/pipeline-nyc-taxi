@@ -40,6 +40,7 @@ Análisis de `yellow_tripdata_2025-03` (4.145.257 filas) y `yellow_tripdata_2024
 | R15 | Pago no cobrado | `payment_type` en 3, 4 o 6 | Advertencia | 118.581 / 81.676 | El viaje existió, pero el importe no se cobró o está en disputa. |
 | R16 | Velocidad imposible (propia) | duración > 0, distancia > 0 y distancia / horas > 80 | Rechazo | 1.050 / 1.241 | p999 = 46 / 48 mph. La velocidad máxima legal en NY es de 65 mph y entre 65 y 80 casi no hay filas. |
 | R17 | Duración larga sin tarifa acorde (propia) | duración > 360 min y `fare_amount` < 0,35 × minutos | Rechazo | 1.364 / 1.922 | El taxímetro cobra al menos US$ 0,70 por minuto. Por encima de 6 h, la mediana es de US$ 0,011 / 0,012 por minuto. |
+| R18 | Duración menor al mínimo (propia) | duración > 0 y < 60 s | Advertencia | 43.216 / 39.531 | Por debajo de 1 minuto la tarifa mediana es la bajada de bandera (US$ 3) o una tarifa fija: no son viajes medidos. Se cobraron, así que no se rechazan. |
 
 ## Evidencia
 
@@ -82,6 +83,30 @@ exacto no cambia el resultado. Las 6 h funcionan como piso: entre 1 y 6 h, la re
 entre tarifa y tiempo fallaría en el 13 % de los viajes medidos (1.278 de 9.617), así que
 por debajo de ese tiempo no es confiable. El viaje real más largo observado (320 mi fuera
 del estado, US$ 2.200) duró 5,4 h.
+
+**R18: viajes de menos de 1 minuto.** R02 y R03 cubren la duración negativa y la nula,
+pero ninguna regla miraba la duración positiva y muy corta. Viajes aceptados con menos de
+2 minutos (antes de R18):
+
+| Duración | Viajes 2025 / 2024 | Con distancia 0 | Millas (promedio) | Tarifa (mediana) | Tarifa negociada (`ratecode` 5) |
+| --- | --- | --- | --- | --- | --- |
+| menos de 30 s | 27.545 / 25.108 | 76 % / 79 % | 0,01 | US$ 20 / 19 | 44 % / 41 % |
+| 30 a 60 s | 7.590 / 7.406 | 46 % / 47 % | 0,08 | US$ 3 | 17 % / 16 % |
+| 1 a 2 min | 27.233 / 26.246 | 10 % / 9 % | 0,31 | US$ 4,40 | 4 % / 3 % |
+
+- **El corte está en 1 minuto.** Por debajo de 30 s no hay distancia y la tarifa es fija
+  o negociada, cargada a mano: son cobros sin un viaje medido. Entre 30 y 60 s la mediana
+  es US$ 3, la bajada de bandera: el taxímetro arrancó y se cortó. Desde 1 minuto son
+  viajes cortos reales, con la tarifa que da el taxímetro.
+- **Advertencia y no rechazo.** El cobro existió: las aceptadas con R18 suman US$ 1,45 /
+  1,31 millones. Rechazarlas sacaría ingreso real de las preguntas de dinero. Es el mismo
+  criterio que R04 y R15.
+- **Cómo se usa.** Las métricas de duración y velocidad excluyen las filas con R18 y las de
+  ingreso las incluyen. El efecto en la duración media de las aceptadas es chico: 15,67 →
+  15,81 min en 2025 y 16,02 → 16,17 min en 2024.
+- De las 43.216 / 39.531 filas con R18, 35.135 / 32.514 quedan aceptadas (las demás tienen
+  otra regla de rechazo, sobre todo R06), y 28.640 / 26.656 también tienen distancia 0
+  (R04).
 
 ### Distancia
 

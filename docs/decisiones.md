@@ -326,9 +326,9 @@ tabla intermedia de dlt y 1,96 GB de staging. Faltan las tablas de calidad y el 
   rechazo violadas y las advertencias que también cumple.
 - **Test de reglas con datos sintéticos**: dos *unit tests* de dbt sobre `int_calidad`
   (`sql/calidad/calidad.yml`), con filas inventadas y sin leer los datos reales:
-  - `reglas_propias_r16_r17_en_el_borde`: 80 mph exactos no rechaza y 80,08 sí; 361 min
-    con US$ 126,35 (0,35 × 361) no rechaza y con un centavo menos sí; 360 min exactos no
-    superan la duración máxima.
+  - `reglas_propias_en_el_borde`: 80 mph exactos no rechaza y 80,08 sí; 361 min con
+    US$ 126,35 (0,35 × 361) no rechaza y con un centavo menos sí; 360 min exactos no
+    superan la duración máxima; 59 s marca R18 y 60 s no.
   - `severidad_se_lee_del_catalogo`: con R16 como advertencia en el catálogo, el mismo
     viaje pasa de rechazo a flags. Este test encontró un bug: si ninguna regla del catálogo
     era de rechazo, `array_agg` daba nulo y las reglas violadas se perdían. Se corrigió con
@@ -439,3 +439,19 @@ se construyen en 6 s. `dbt test`: 20 tests pasan; pytest: 8.
 | Reproceso de 2025-03 y luego de 2024-03 | Los dos archivos conservan su sha256 (2024 `f61f8171…`, 2025 `66e6e9ff…`); los conteos por partición no cambian |
 | Tipos en el Parquet | Importes, distancia y derivadas `DECIMAL(10,2)`; códigos `SMALLINT`; `fecha` `DATE` |
 | Tests | `trips_curados`: `trip_id` único y no nulo, `dia_semana` entre 1 y 7. pytest: 9 |
+
+### R18: duración menor a 1 minuto (agregada después del paso 12)
+
+R02 y R03 cubrían la duración negativa y la nula, pero ninguna regla miraba la duración
+positiva y muy corta: unos 35.000 viajes aceptados por mes de menos de 1 minuto. Se agregó
+**R18, advertencia, umbral 60 s** en el catálogo. Evidencia y justificación en `reglas.md`.
+
+- Cambió el seed, una línea de `int_calidad` y el unit test (`reglas_propias_en_el_borde`:
+  59 s marca R18, 60 s no). Se reconstruyó la calidad (259 s) y la capa curada.
+- La cuarentena no cambia (141.982), porque es una advertencia. R18 marca 43.216 / 39.531
+  filas, de las que 35.135 / 32.514 quedan aceptadas, con US$ 1,45 / 1,31 millones.
+- **Regla para el paso 13:** las métricas de duración y velocidad excluyen las filas con
+  R18; las de ingreso las incluyen.
+- `dbt test`: 21 tests pasan. Huellas nuevas de la capa curada: 2024 `db3c1e4d…`, 2025
+  `eb25f5cf…` (cambian porque la columna `flags` cambió).
+

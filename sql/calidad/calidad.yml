@@ -43,11 +43,11 @@ models:
           - not_null
 
   - name: reporte_calidad_reglas
-    description: Filas por regla y por mes, con las 17 reglas aunque no tengan casos.
+    description: Filas por regla y por mes, con todas las reglas del catálogo aunque no tengan casos.
 
 unit_tests:
   # Datos sintéticos, justo a cada lado de los umbrales de las dos reglas propias.
-  - name: reglas_propias_r16_r17_en_el_borde
+  - name: reglas_propias_en_el_borde
     model: int_calidad
     given:
       - input: ref('stg_yellow_trips')
@@ -75,6 +75,15 @@ unit_tests:
              pickup_at: "2025-03-10 10:00:00", dropoff_at: "2025-03-10 16:00:00",
              trip_distance: 20, fare_amount: 1, total_amount: 5, passenger_count: 1,
              pu_location_id: 100, do_location_id: 100, payment_type: 1, ratecode_id: 1}
+          # R18: 59 s queda marcado como advertencia; 60 s exactos no.
+          - {trip_id: f, source_file: data/raw/yellow/year=2025/month=03/x.parquet, dup_n: 1,
+             pickup_at: "2025-03-10 10:00:00", dropoff_at: "2025-03-10 10:00:59",
+             trip_distance: 0.1, fare_amount: 3, total_amount: 5, passenger_count: 1,
+             pu_location_id: 100, do_location_id: 100, payment_type: 1, ratecode_id: 1}
+          - {trip_id: g, source_file: data/raw/yellow/year=2025/month=03/x.parquet, dup_n: 1,
+             pickup_at: "2025-03-10 10:00:00", dropoff_at: "2025-03-10 10:01:00",
+             trip_distance: 0.1, fare_amount: 3, total_amount: 5, passenger_count: 1,
+             pu_location_id: 100, do_location_id: 100, payment_type: 1, ratecode_id: 1}
       - input: ref('stg_taxi_zones')
         rows:
           - {location_id: 100}
@@ -82,6 +91,7 @@ unit_tests:
         rows:
           - {id: R16, severidad: rechazo, umbral: 80}
           - {id: R17, severidad: rechazo, umbral: 360, umbral_2: 0.35}
+          - {id: R18, severidad: advertencia, umbral: 60}
     expect:
       rows:
         - {trip_id: a, reglas_rechazo: "", flags: ""}
@@ -89,6 +99,8 @@ unit_tests:
         - {trip_id: c, reglas_rechazo: "", flags: ""}
         - {trip_id: d, reglas_rechazo: R17, flags: ""}
         - {trip_id: e, reglas_rechazo: "", flags: ""}
+        - {trip_id: f, reglas_rechazo: "", flags: R18}
+        - {trip_id: g, reglas_rechazo: "", flags: ""}
 
   # La severidad sale del catálogo: con R16 como advertencia, el mismo viaje pasa a flags.
   - name: severidad_se_lee_del_catalogo
