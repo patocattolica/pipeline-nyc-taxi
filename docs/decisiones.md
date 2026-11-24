@@ -116,23 +116,34 @@ está en `reglas.md`. Las consultas que lo sostienen están en `analisis/explora
 **Criterio general:**
 - **Rechazo:** la fila no es un viaje válido del mes, o un campo que el modelo necesita es
   imposible.
-- **Advertencia:** el viaje existió y su importe es válido, pero un atributo es dudoso.
+- **Advertencia:** el viaje existió, pero un atributo es dudoso. Si ese atributo entra en
+  una métrica, la fila se excluye solo de esa métrica (`duracion_confiable`,
+  `importe_confiable`).
 
-**Decisiones principales:**
-- **R03 (bajada igual a la subida): rechazo.** Manda a la cuarentena al 100 % del
-  proveedor 7, que es el 0,52 % de 2025.
+**Decisiones principales** (estado actual; los cambios posteriores al paso 10 están en las
+secciones de R18, R19 y "Revisión de reglas"):
+- **R03 (bajada igual a la subida): advertencia.** Empezó como rechazo y mandaba a la
+  cuarentena al 100 % del proveedor 7, el 0,52 % de 2025. Ahora la fila se acepta y queda
+  fuera de las métricas de duración.
 - **R04 (distancia ≤ 0): advertencia.** Son 103.722 / 87.168 filas, y la mayoría son viajes
   reales: tarifa negociada, Flex Fare o distancia no informada.
 - **R05 (más de 500 millas): advertencia.** Todas las filas que la cumplen ya las rechazan
   R16 o R03.
-- **R06 (importe negativo): rechazo.** Son reversos del proveedor 2. Su gemela positiva
-  queda aceptada (limitación documentada).
+- **R06 (importe negativo): rechazo.** Son reversos del proveedor 2. Su gemela positiva la
+  rechaza R20.
 - **R09 (zona inexistente): rechazo.** Una clave sin fila en `dim_zone` rompe el modelo
   estrella.
+- **R10 (zona desconocida): advertencia, solo para la 264.** La 265 ("Outside of NYC") es
+  un destino conocido; la subida ahí la marca R21.
 - **Reglas propias:**
   - R16, velocidad mayor a 80 mph.
   - R17, más de 6 h con una tarifa menor a US$ 0,35 por minuto. Es la mitad de lo mínimo
     que cobra el taxímetro: un viaje de más de 6 horas tiene que tener una tarifa acorde.
+  - R18, duración menor a 1 minuto (advertencia).
+  - R19, tarifa negativa con total positivo (advertencia).
+  - R20, gemela positiva de un reverso (rechazo).
+  - R21, subida fuera de NYC; R22, tarifa fija de JFK sin JFK; R23, cargo del CBD fuera de
+    catálogo (advertencias).
 - **Reprocesar con otro umbral:** los umbrales viven en el catálogo, no en el código. Un
   viaje real que cae en una regla queda en la cuarentena, aparece en el reporte y se puede
   reprocesar.
@@ -398,9 +409,10 @@ se construyen en 6 s. `dbt test`: 20 tests pasan; pytest: 8.
 - **Las columnas derivadas se calculan en dbt** (`sql/curada/trips_curados.sql`, vista sobre
   `trips_aceptados`): quedan junto al resto del SQL y tienen tests. DuckDB solo lee y
   escribe. La vista agrega:
-  - `duracion_min`, `velocidad_mph` (nula si la duración no es positiva; en las aceptadas no
-    pasa, porque R02 y R03 rechazan), `fecha`, `hora` y `dia_semana` de la subida (ISO:
-    1 = lunes, 7 = domingo).
+  - `duracion_min`, `velocidad_mph`, `fecha`, `hora` y `dia_semana` de la subida (ISO:
+    1 = lunes, 7 = domingo). Desde la revisión de reglas, la duración sale de `duracion_seg`
+    (con el cambio de horario) y la velocidad es nula si la duración o la distancia no son
+    positivas.
   - `propina_pct` = 100 × `tip_amount` / `fare_amount`, nula si la tarifa no es positiva.
   - `pu_borough`, `pu_zone`, `do_borough` y `do_zone`, de `stg_taxi_zones`.
   - Las derivadas son `numeric(10,2)`, como la distancia y los importes. El cast va afuera
