@@ -301,10 +301,8 @@ tendríamos que pasar las reglas a modelos incrementales. La lista completa est�
 
 ## Uso de IA
 
-Usamos Claude Code (Anthropic) como asistente durante todo el proyecto, y los dos le dimos el
-mismo uso. Las decisiones las tomamos nosotros: qué herramientas usar, qué severidad y qué
-umbral lleva cada regla, cómo responder cada pregunta. Además, auditamos todo lo que hacía.
-Claude ejecutaba lo que le pedíamos: escribía código y consultas, corría pruebas y mediciones,
-exploraba los datos para verificar cifras y nos ayudaba a redactar la documentación. Cada
-cambio pasó por una rama y un pull request que revisó el otro antes de integrarlo, y todo el
-código lo podemos explicar.
+Usamos Claude Code (Anthropic) como asistente durante el proyecto, y los dos le dimos el mismo
+uso. Las decisiones las tomamos nosotros: qué herramientas usar, qué severidad y qué umbral
+lleva cada regla, cómo responder cada pregunta. Claude ejecutaba lo que le pedíamos: escribió
+código parcialmente y consultas, corría pruebas y nos ayudaba a redactar la documentación. Cada
+cambio pasó por una rama y un pull request que revisó el otro antes de integrarlo.
