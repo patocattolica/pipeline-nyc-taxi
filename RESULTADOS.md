@@ -272,9 +272,9 @@ order by mes, f.payment_type
 
 | Aeropuerto | Viajes 2024-03 | Tarifa media 2024-03 (US$) | Viajes 2025-03 | Tarifa media 2025-03 (US$) |
 | --- | --- | --- | --- | --- |
-| JFK Airport | 181.975 | 64,79 | 180.699 | 64,15 |
+| JFK Airport | 181.975 | 64,79 | 180.699 | 64,18 |
 | LaGuardia Airport | 145.278 | 43,76 | 144.862 | 43,82 |
-| JFK o LaGuardia | 323.987 | 55,52 | 322.767 | 55,16 |
+| JFK o LaGuardia | 323.987 | 55,52 | 322.767 | 55,18 |
 
 Los aeropuertos se identifican por el nombre de la zona en `dim_zone`. Un viaje entre los dos
 aeropuertos cuenta en cada uno, pero una sola vez en el total. Por eso el total es menor que
@@ -301,6 +301,7 @@ viajes_aeropuerto as (
         m.inicio,
         f.trip_id,
         f.fare_amount,
+        f.tarifa_confiable,
         zpu.zone as pu_zone,
         zdo.zone as do_zone
     from {{ ref('fact_trips') }} as f
@@ -312,21 +313,23 @@ viajes_aeropuerto as (
        or zdo.zone in ('JFK Airport', 'LaGuardia Airport')
 ),
 
+-- Una fila por viaje y aeropuerto: si empieza y termina en el mismo, cuenta una vez.
 por_aeropuerto as (
-    select v.periodo, v.inicio, v.fare_amount, a.aeropuerto
+    select v.periodo, v.inicio, v.fare_amount, v.tarifa_confiable, a.aeropuerto
     from viajes_aeropuerto as v
     cross join (values ('JFK Airport'), ('LaGuardia Airport')) as a (aeropuerto)
     where a.aeropuerto in (v.pu_zone, v.do_zone)
 ),
 
 resultado as (
-    select periodo, inicio, aeropuerto, count(*) as viajes, avg(fare_amount) as tarifa_media
+    select periodo, inicio, aeropuerto, count(*) as viajes,
+        avg(fare_amount) filter (where tarifa_confiable) as tarifa_media
     from por_aeropuerto
     group by periodo, inicio, aeropuerto
 
     union all
 
-    select periodo, inicio, 'JFK o LaGuardia', count(*), avg(fare_amount)
+    select periodo, inicio, 'JFK o LaGuardia', count(*), avg(fare_amount) filter (where tarifa_confiable)
     from viajes_aeropuerto
     group by periodo, inicio
 )
@@ -348,14 +351,13 @@ order by mes, aeropuerto
 | Medida | 2024-03 | 2025-03 | Variación | Variación % |
 | --- | --- | --- | --- | --- |
 | Viajes | 3.534.033 | 4.051.870 | 517.837 | 14,65 |
-| Tarifa media (US$) | 19,17 | 18,47 | −0,70 | −3,66 |
+| Tarifa media (US$), sin R19 | 19,26 | 19,29 | 0,03 | 0,16 |
 
-**Hipótesis:** casi todo el aumento (490.356 de los 517.837 viajes) viene de los viajes con
-`payment_type` 0 (Flex Fare, con precio cerrado al pedirlo por aplicación), que pasaron del
-12,0 % al 22,6 % del mes. Tarjeta y efectivo juntos casi no cambian (+8.567). La tarifa media
-baja por la mezcla: esos viajes son más baratos (US$ 17,14 de media) y los de tarjeta son algo
-más cortos (de 3,36 a 3,29 millas). No parece un cambio de precios: en viajes con tarjeta de
-1 a 3 millas, la tarifa por milla casi no varía (de US$ 7,77 a 7,67).
+**Hipótesis:** el 89 % del aumento (461.727 de 517.837 viajes) es Flex Fare (`payment_type` 0) del
+proveedor 2: viajes pedidos por aplicación. Desde el 5/1/2025 el cargo de congestión es de US$ 0,75
+por viaje en taxi amarillo y de US$ 1,50 en Uber y Lyft, lo que favorece la sustitución. El calendario
+no lo explica: los dos marzos (y las variaciones de a) tienen 5 sábados y 5 domingos, aunque estos crecen
+más (+21 y +22 % por día). Sin R19 la tarifa media casi no cambia (+0,16 %): la baja venía de esas filas.
 
 <details>
 <summary>Consulta: <code>sql/preguntas/p_f_variacion_total.sql</code></summary>
@@ -372,7 +374,7 @@ por_mes as (
         m.periodo,
         m.inicio,
         count(*) as viajes,
-        avg(f.fare_amount) as tarifa_media
+        avg(f.fare_amount) filter (where f.tarifa_confiable) as tarifa_media
     from {{ ref('fact_trips') }} as f
     join {{ ref('dim_date') }} as d on d.fecha = f.fecha
     join meses as m on d.anio = extract(year from m.inicio) and d.mes = extract(month from m.inicio)
