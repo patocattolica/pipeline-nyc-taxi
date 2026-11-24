@@ -24,6 +24,7 @@ como **2025-03 / 2024-03** cuando corresponde.
 | 15. Tiempo y pico de RAM de `make all` en la propia máquina | Hecho en la rama `fix-tarifas` | Sección "Medición de `make all`" de este archivo |
 | R19 (tarifa negativa con total positivo) | Hecho en la rama `fix-tarifas` | `seeds/reglas_calidad.csv`, `sql/calidad/`, `sql/modelo/fact_trips.sql`, `sql/preguntas/` |
 | Revisión de reglas: cambio de horario, R03, R10, R19 en el ingreso, R20 a R23 | Hecho en la rama `fix-reglas` | Sección "Revisión de reglas" de este archivo, `reglas.md` |
+| Tablero opcional en Metabase (`make viz`), fuera de `make all` | Hecho en la rama `metabase` | Sección "Tablero en Metabase" de este archivo, `src/tablero.py`, `tests/test_tablero.py` |
 | 17 en adelante | Pendiente | — |
 
 **Ramas:**
@@ -847,3 +848,47 @@ de pago 6 como rechazo (hoy hay 0 casos) y R16 solo para duraciones de 60 s o m�
 | Duración media confiable | 15,78 / 16,15 min |
 | `make test` | 19 pasan |
 | Huellas de la capa curada (las dos corridas) | 2024 `75cce5ab…`, 2025 `dade5352…` |
+
+## Tablero en Metabase (opcional, fuera del pipeline)
+
+`make viz`, después de `make all`, levanta Metabase en http://localhost:3001 y arma el tablero
+"Comparación interanual" (colección "Taxis NYC"): el mes asignado contra el mismo mes de 2024.
+El usuario administrador sale de `MB_ADMIN_EMAIL` y `MB_ADMIN_PASSWORD` (`.env.example`).
+
+### Por qué y con qué límites
+
+- **Es una capa de presentación, no una etapa.** La consigna se resuelve con las preguntas en
+  SQL y `RESULTADOS.md`; el tablero sirve para mostrar la comparación en la defensa. Por eso
+  queda fuera de `make all` y de Dagster: el servicio tiene el perfil `viz` de Compose, así que
+  `docker compose up` y `make postgres` no lo levantan.
+- **No calcula nada propio.** Cada tarjeta es un `SELECT` sobre `analytics.p_*`,
+  `agg_zone_hour` o los reportes de calidad, así los números son los de `RESULTADOS.md`. Las dos
+  tarjetas por hora repiten el cálculo de la pregunta b (ingreso confiable sobre viajes con
+  importe, sin R19). `tests/test_tablero.py` falla si una tarjeta lee otra tabla.
+- **Reproducible con un comando.** Metabase guarda su configuración (usuario, conexión, tarjetas)
+  en una base H2 dentro del volumen `metabase_data`, que no está en Git. En lugar de exportarla,
+  `src/tablero.py` arma todo por la API de Metabase: crea el usuario la primera vez, la conexión
+  a Postgres (limitada al esquema `analytics`), la colección, las tarjetas y el tablero. Busca
+  cada cosa por nombre y actualiza lo que existe, así que correrlo dos veces no duplica nada, y
+  si se borra el volumen lo rearma. Usa solo la biblioteca estándar (`urllib`): no agrega
+  dependencias.
+- **Versión fijada:** `metabase/metabase:v0.65.3.6`. Telemetría y búsqueda de actualizaciones
+  apagadas (`MB_ANON_TRACKING_ENABLED`, `MB_CHECK_FOR_UPDATES`).
+- **Puerto 3001**, porque el 3000 es el de `make ui` (Dagster). Se cambia con `MB_PUERTO`.
+
+### Memoria
+
+Montón de la JVM en 768 MB (`JAVA_OPTS=-Xmx768m`). Con el tablero abierto, el contenedor usa
+1,27 GiB de memoria propia. Con un tope de 1.280 MB tocaba el límite (1.929 eventos `max` en el
+cgroup, sin OOM); con 1.536 MB no lo toca. Como no corre junto con el pipeline, en la notebook de
+8 GB conviven Postgres (1,5 GB) y Metabase (1,5 GB).
+
+### Verificado
+
+| Prueba | Resultado |
+| --- | --- |
+| Arranque | `/api/health` responde en unos 40 s |
+| Primera corrida con el volumen vacío | Crea el usuario, la conexión, 15 tarjetas y el tablero |
+| Segunda corrida | Mismas tarjetas y mismo tablero, sin duplicados |
+| Las 15 tarjetas por la API | Todas sin error; viajes 4.013.620, +14,78 %, tarifa US$ 19,22, −0,07 %, CBD 73,98 % (iguales a `RESULTADOS.md`) |
+| `make test` | 22 pasan, 3 de ellos nuevos |

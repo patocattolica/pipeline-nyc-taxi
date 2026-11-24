@@ -29,5 +29,30 @@ services:
       timeout: 3s
       retries: 10
 
+  # Tablero opcional para mostrar los resultados: solo arranca con `make viz` (perfil viz),
+  # nunca con `make all`. Lee las tablas que deja dbt; no calcula nada propio.
+  metabase:
+    image: metabase/metabase:v0.65.3.6
+    container_name: taxi_metabase
+    profiles: ["viz"]
+    restart: unless-stopped
+    # Medido: con el tablero abierto usa unos 1,25 GB (montón de 768 MB más lo propio de la JVM).
+    mem_limit: 1536m
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Montón de la JVM acotado para que entre en la notebook de 8 GB junto con Postgres.
+      JAVA_OPTS: -Xmx768m
+      # Configuración interna de Metabase (usuarios, tarjetas) en un archivo H2 del volumen.
+      MB_DB_FILE: /metabase-data/metabase.db
+      MB_ANON_TRACKING_ENABLED: "false"
+      MB_CHECK_FOR_UPDATES: "false"
+    ports:
+      - "127.0.0.1:${MB_PUERTO:-3001}:3000"
+    volumes:
+      - metabase_data:/metabase-data
+
 volumes:
   pgdata:
+  metabase_data:
