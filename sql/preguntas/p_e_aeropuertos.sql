@@ -13,7 +13,7 @@ viajes_aeropuerto as (
         m.inicio,
         f.trip_id,
         f.fare_amount,
-        f.tarifa_confiable,
+        f.importe_confiable,
         zpu.zone as pu_zone,
         zdo.zone as do_zone
     from {{ ref('fact_trips') }} as f
@@ -27,7 +27,7 @@ viajes_aeropuerto as (
 
 -- Una fila por viaje y aeropuerto: si empieza y termina en el mismo, cuenta una vez.
 por_aeropuerto as (
-    select v.periodo, v.inicio, v.fare_amount, v.tarifa_confiable, a.aeropuerto
+    select v.periodo, v.inicio, v.fare_amount, v.importe_confiable, a.aeropuerto
     from viajes_aeropuerto as v
     cross join (values ('JFK Airport'), ('LaGuardia Airport')) as a (aeropuerto)
     where a.aeropuerto in (v.pu_zone, v.do_zone)
@@ -35,13 +35,13 @@ por_aeropuerto as (
 
 resultado as (
     select periodo, inicio, aeropuerto, count(*) as viajes,
-        avg(fare_amount) filter (where tarifa_confiable) as tarifa_media
+        avg(fare_amount) filter (where importe_confiable) as tarifa_media
     from por_aeropuerto
     group by periodo, inicio, aeropuerto
 
     union all
 
-    select periodo, inicio, 'JFK o LaGuardia', count(*), avg(fare_amount) filter (where tarifa_confiable)
+    select periodo, inicio, 'JFK o LaGuardia', count(*), avg(fare_amount) filter (where importe_confiable)
     from viajes_aeropuerto
     group by periodo, inicio
 )

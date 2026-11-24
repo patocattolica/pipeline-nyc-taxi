@@ -1,5 +1,6 @@
 -- b. La hora del día con mayor ingreso promedio por viaje, en cada uno de los dos meses.
 -- El promedio es ingreso total / viajes de la hora: no se promedian los promedios de agg_zone_hour.
+-- Usa el ingreso y los viajes confiables (sin R19); la columna viajes cuenta todos.
 with meses as (
     select 'asignado' as periodo, to_date('{{ var("mes") }}', 'YYYY-MM') as inicio
     union all
@@ -12,7 +13,8 @@ por_hora as (
         m.inicio,
         a.hora,
         sum(a.viajes) as viajes,
-        sum(a.ingreso_total) as ingreso_total
+        sum(a.viajes_con_importe) as viajes_con_importe,
+        sum(a.ingreso_confiable) as ingreso_total
     from {{ ref('agg_zone_hour') }} as a
     join {{ ref('dim_date') }} as d on d.fecha = a.fecha
     join meses as m on d.anio = extract(year from m.inicio) and d.mes = extract(month from m.inicio)
@@ -25,11 +27,11 @@ ranking as (
         inicio,
         hora,
         viajes,
-        (ingreso_total / viajes)::numeric(10, 2) as ingreso_promedio,
+        (ingreso_total / viajes_con_importe)::numeric(10, 2) as ingreso_promedio,
         -- Ingreso promedio de todo el mes, como referencia.
         (sum(ingreso_total) over (partition by periodo)
-            / sum(viajes) over (partition by periodo))::numeric(10, 2) as ingreso_promedio_mes,
-        row_number() over (partition by periodo order by ingreso_total / viajes desc, hora) as puesto
+            / sum(viajes_con_importe) over (partition by periodo))::numeric(10, 2) as ingreso_promedio_mes,
+        row_number() over (partition by periodo order by ingreso_total / viajes_con_importe desc, hora) as puesto
     from por_hora
 )
 

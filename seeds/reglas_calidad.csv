@@ -1,14 +1,14 @@
 id,descripcion,severidad,umbral,umbral_2,unidad
 R01,Subida fuera del mes del archivo,rechazo,,,
 R02,Bajada anterior a la subida,rechazo,,,
-R03,Bajada igual a la subida,rechazo,,,
+R03,Bajada igual a la subida,advertencia,,,
 R04,Distancia en cero o negativa,advertencia,,,
 R05,Distancia mayor al máximo,advertencia,500,,millas
 R06,Importe total negativo,rechazo,,,
 R07,Pasajeros nulo,advertencia,,,
 R08,Pasajeros en cero,advertencia,,,
 R09,Zona de origen o destino que no está en la tabla de zonas,rechazo,,,
-R10,Zona desconocida (264 o 265),advertencia,,,
+R10,Zona desconocida (264),advertencia,,,
 R11,Duplicado exacto,rechazo,,,
 R12,Cargo de aeropuerto con subida fuera de JFK y LaGuardia,advertencia,,,
 R13,ratecode_id fuera de catálogo,advertencia,,,
@@ -18,3 +18,7 @@ R16,Velocidad imposible,rechazo,80,,millas por hora
 R17,Duración larga sin tarifa acorde,rechazo,360,0.35,minutos; dólares por minuto
 R18,Duración menor al mínimo,advertencia,60,,segundos
 R19,Tarifa negativa con importe total positivo,advertencia,0,,dólares
+R20,Gemela positiva de un reverso (misma subida; bajada; zonas y proveedor que un total negativo),rechazo,,,
+R21,Subida fuera de NYC (zona 265),advertencia,,,
+R22,Tarifa fija de JFK (ratecode 2) en un viaje que no toca JFK,advertencia,,,
+R23,Cargo de congestión del CBD fuera de catálogo,advertencia,0.75,,dólares
