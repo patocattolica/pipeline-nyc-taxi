@@ -61,14 +61,16 @@ models:
                 field: location_id
       - name: duracion_confiable
         description: >
-          Falso si el viaje tiene R18 (menos de 1 minuto). Las métricas de duración y
-          velocidad se calculan solo con los verdaderos; las de viajes e ingreso, con todos.
+          Falso si el viaje tiene R03 (bajada igual a la subida) o R18 (menos de 1 minuto). Las
+          métricas de duración y velocidad se calculan solo con los verdaderos; las de viajes e
+          ingreso, con todos.
         data_tests:
           - not_null
-      - name: tarifa_confiable
+      - name: importe_confiable
         description: >
-          Falso si el viaje tiene R19 (fare_amount negativo con total_amount positivo). Los
-          promedios de fare_amount se calculan solo con los verdaderos; viajes e ingreso, con todos.
+          Falso si el viaje tiene R19 (fare_amount negativo con total_amount positivo): ni la
+          tarifa ni el total son el precio del viaje. Los promedios de fare_amount y de
+          total_amount se calculan solo con los verdaderos; los conteos y las sumas, con todos.
         data_tests:
           - not_null
 
@@ -91,10 +93,14 @@ models:
                 to: ref('dim_date')
                 field: fecha
       - name: ingreso_total
-        description: Suma de total_amount de todos los viajes, R18 incluidos.
+        description: Suma de total_amount de todos los viajes, R18 y R19 incluidos.
+      - name: ingreso_confiable
+        description: Suma de total_amount de los viajes sin R19 (importe_confiable).
+      - name: viajes_con_importe
+        description: Viajes que entran en ingreso_confiable; es el divisor del ingreso promedio por viaje.
       - name: duracion_media_min
         description: >
-          Promedio de duracion_min de los viajes sin R18. Nulo si todos los viajes del grupo
-          duraron menos de 1 minuto.
+          Promedio de duracion_min de los viajes sin R03 ni R18. Nulo si ningún viaje del grupo
+          tiene una duración confiable.
       - name: viajes_con_duracion
         description: Viajes que entran en duracion_media_min; sirve para ponderar al agregar horas.

@@ -23,6 +23,7 @@ como **2025-03 / 2024-03** cuando corresponde.
 | 16. Orquestación con Dagster | Hecho en la rama `dagster` | `src/orquestacion/definitions.py`, `Makefile`, `tests/test_orquestacion.py` |
 | 15. Tiempo y pico de RAM de `make all` en la propia máquina | Hecho en la rama `fix-tarifas` | Sección "Medición de `make all`" de este archivo |
 | R19 (tarifa negativa con total positivo) | Hecho en la rama `fix-tarifas` | `seeds/reglas_calidad.csv`, `sql/calidad/`, `sql/modelo/fact_trips.sql`, `sql/preguntas/` |
+| Revisión de reglas: cambio de horario, R03, R10, R19 en el ingreso, R20 a R23 | Hecho en la rama `fix-reglas` | Sección "Revisión de reglas" de este archivo, `reglas.md` |
 | 17 en adelante | Pendiente | — |
 
 **Ramas:**
@@ -489,6 +490,8 @@ total. Se agregó **R19, advertencia, umbral 0** en el catálogo. Evidencia y ju
   +16 %.
 - Huellas nuevas de la capa curada (cambian porque cambió la columna `flags`): 2024
   `ea6554d1…`, 2025 `361e1449…`.
+- **Ampliada después:** `tarifa_confiable` pasó a llamarse `importe_confiable` y también se
+  aplica al ingreso promedio. Ver la sección "Revisión de reglas".
 
 ## Modelo y preguntas (Parte 5, paso 13)
 
@@ -756,3 +759,79 @@ del contenedor.
 - La consigna pide medir en la propia máquina y que el pipeline corra en una notebook de
   8 GB, que es donde lo prueba el docente. El pico medido (unos 2,5 GiB) entra holgado, y
   Postgres no puede pasar de 1,5 GiB porque lo limita `mem_limit` en `compose.yaml`.
+
+## Revisión de reglas (después de R19)
+
+Una revisión del catálogo contra los datos encontró un error de cálculo (el cambio de
+horario), dos reglas incoherentes con el criterio de `reglas.md` (R03 y R10), una limitación
+que se podía resolver con una regla (las gemelas de los reversos) y que R19 tampoco tiene un
+total confiable. Evidencia y justificación de cada regla en `reglas.md`.
+
+### Qué cambió
+
+| Cambio | Dónde | Por qué |
+| --- | --- | --- |
+| Duración con la zona horaria de Nueva York | `int_calidad` (`duracion_seg`), `trips_curados` | El 10/3/2024 y el 9/3/2025 el reloj saltó de las 2:00 a las 3:00. Restar las fechas locales sumaba 60 minutos a 1.360 / 1.059 viajes |
+| R02 y R03 comparan `duracion_seg` | `int_calidad` | Todas las reglas de duración usan el mismo cálculo. En noviembre, sin esto, un viaje que cruza el cambio podía dar negativo |
+| R03 pasa de rechazo a advertencia | seed | Era incoherente con R18: el viaje se cobró y lo que falta es la duración. Como rechazo dejaba afuera al proveedor 7 entero (21.481 viajes de 2025) |
+| `duracion_confiable` excluye R03 y R18 | `fact_trips` | Sin esto, los 22.000 viajes con duración 0 bajaban la duración media |
+| Velocidad nula si la distancia no es positiva | `trips_curados` | Con R04 como advertencia, 174.189 viajes aceptados tenían velocidad 0, que bajaba cualquier promedio |
+| R10 solo para la 264; R21 para la subida en la 265 | seed, `int_calidad` | La 265 ("Outside of NYC") es un destino conocido, con tarifa media de US$ 100. Subir ahí es lo dudoso |
+| R20, gemela de un reverso (rechazo) | seed, `int_calidad` (CTE `reversos`) | Resuelve la limitación de las gemelas: el cobro original de un par revertido ya no cuenta como ingreso |
+| `tarifa_confiable` pasa a `importe_confiable` y se aplica al ingreso promedio | `fact_trips`, `agg_zone_hour` (`ingreso_confiable`, `viajes_con_importe`), pregunta b | En R19 el total tampoco es el precio: US$ 4,51 de media contra US$ 25,63 |
+| R22 (tarifa fija de JFK sin JFK) y R23 (cargo del CBD fuera de catálogo), advertencias | seed, `int_calidad` | Reglas de coherencia descubiertas en la revisión. El valor del cargo (0,75) está en el catálogo |
+
+**Se evaluaron y no se cambiaron:** R05 a rechazo (hoy ninguna fila la cumple sola), el tipo
+de pago 6 como rechazo (hoy hay 0 casos) y R16 solo para duraciones de 60 s o más.
+
+### Decisiones de implementación
+
+- **La duración se calcula una sola vez.** `int_calidad` expone `duracion_seg` y la capa curada
+  la reutiliza, así las reglas y las métricas no pueden usar duraciones distintas. Calcularla
+  en el staging habría roto la regla de que el staging solo renombra y convierte tipos.
+- **`at time zone 'America/New_York'`** convierte la fecha local en un instante. La resta de
+  dos instantes es el tiempo transcurrido y no depende de la zona horaria de la sesión de
+  Postgres (`Etc/UTC` en el contenedor).
+- **La CTE `reversos` usa `distinct`.** Así cada clave aparece una sola vez y el `left join`
+  no puede duplicar viajes. Hoy los pares son uno a uno; si un día no lo fueran, la
+  reconciliación lo detectaría igual.
+- **R23 compara el valor absoluto**, porque el reverso de un cargo válido trae −0,75.
+- **Unit tests nuevos** en `sql/calidad/calidad.yml`:
+  - `r20_gemela_de_un_reverso`: la gemela exacta se rechaza; un centavo de diferencia o un
+    proveedor distinto no la hacen gemela.
+  - `duracion_con_cambio_de_horario`: de 1:50 a 3:10 del 9/3/2025 da 1.200 s; de 1:59:30 a
+    3:00:10, 40 s y R18; el día siguiente, 4.800 s.
+  - `reglas_de_zona_y_de_cargos`: R10, R21, R22 y R23, cada una con su caso que sí y su caso
+    que no.
+
+### Efecto
+
+| | 2024-03 | 2025-03 |
+| --- | --- | --- |
+| Aceptadas, antes → ahora | 3.534.033 → 3.496.670 | 4.051.870 → 4.013.620 |
+| Cuarentena, antes → ahora | 48.595 → 85.958 (2,40 %) | 93.387 → 131.637 (3,18 %) |
+| Entran por R03 (solo tenían R03) | 1.007 | 22.195 |
+| Salen por R20 (solo tienen R20) | 38.370 | 60.445 |
+
+- **Pregunta a:** JFK pasa del tercer al cuarto puesto y su variación, de −0,64 % a −3,35 %. Las
+  gemelas de reversos se concentran en JFK: R20 saca 9.049 / 4.661 subidas ahí.
+- **Pregunta b:** la hora sigue siendo las 5, con US$ 35,32 / 35,48. La baja que se veía en
+  2025 venía de R19.
+- **Pregunta e:** los viajes de aeropuerto pasan de −0,4 % a −1,8 %.
+- **Pregunta f:** los viajes crecen un 14,78 % (antes, 14,65 %) y la tarifa media no cambia
+  (−0,07 %).
+
+### Verificado
+
+| Prueba | Resultado |
+| --- | --- |
+| Unit tests de dbt | 7 pasan, 3 de ellos nuevos |
+| `make all MES=2025-03`, corrida 1 | Código 0; dbt 65 de 65; `int_calidad` 305 s (antes, 206–259 s) |
+| `make all MES=2025-03`, corrida 2 | Código 0 en 612 s; dbt 65 de 65; `int_calidad` 313 s |
+| Conteos y huellas entre las dos corridas | Idénticos: leídas 3.582.628 / 4.145.257, aceptadas 3.496.670 / 4.013.620, cuarentena 85.958 / 131.637, diferencia 0 |
+| Reconciliación | Diferencia 0 en los dos meses |
+| Viajes que cruzan el cambio de horario | Duración mediana de 75 min → 14,5 / 15,4 min |
+| Velocidad con distancia ≤ 0 / duración 0 entre las confiables | 0 / 0 filas |
+| Duración media confiable | 15,78 / 16,15 min |
+| `make test` | 19 pasan |
+| Huellas de la capa curada (las dos corridas) | 2024 `75cce5ab…`, 2025 `dade5352…` |

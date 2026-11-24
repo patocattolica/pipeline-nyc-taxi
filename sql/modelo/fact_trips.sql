@@ -25,8 +25,10 @@ select
     velocidad_mph,
     propina_pct,
     flags,
-    -- Las métricas de duración y velocidad excluyen los viajes de menos de 1 minuto (R18).
-    not ('R18' = any(string_to_array(flags, ','))) as duracion_confiable,
-    -- Los promedios de fare_amount excluyen las tarifas negativas con total positivo (R19).
-    not ('R19' = any(string_to_array(flags, ','))) as tarifa_confiable
+    -- Las métricas de duración y velocidad excluyen los viajes con bajada igual a la subida
+    -- (R03) y los de menos de 1 minuto (R18). && es "comparten algún elemento".
+    not (string_to_array(flags, ',') && array['R03', 'R18']) as duracion_confiable,
+    -- Los promedios de dinero (fare_amount y total_amount) excluyen las tarifas negativas con
+    -- total positivo (R19): ni la tarifa ni el total de esas filas son el precio del viaje.
+    not ('R19' = any(string_to_array(flags, ','))) as importe_confiable
 from {{ ref('trips_curados') }}

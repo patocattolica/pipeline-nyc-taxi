@@ -12,26 +12,28 @@ dbt build --select sql/preguntas --vars '{mes: "2025-03"}'
 El mes de comparación es el mismo mes del año anterior. Si alguno de los dos no está
 cargado, el test `tests/dbt/meses_de_preguntas_cargados.sql` falla. Todas las cifras son
 de viajes **aceptados**: la cuarentena no entra en el modelo. El ingreso es `total_amount`
-y la tarifa, `fare_amount`.
+y la tarifa, `fare_amount`. Los promedios de tarifa y de ingreso excluyen los viajes con
+R19, cuyos importes no son el precio del viaje (`importe_confiable`; ver `reglas.md`). Los
+conteos de viajes los incluyen.
 
 ## a. Las 10 zonas de origen con más viajes y su variación contra 2024
 
 | Puesto | Zona | Barrio | 2025-03 | 2024-03 | Variación | Variación % |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | Midtown Center | Manhattan | 177.720 | 161.173 | 16.547 | 10,27 |
-| 2 | Upper East Side South | Manhattan | 167.082 | 153.871 | 13.211 | 8,59 |
-| 3 | JFK Airport | Queens | 151.051 | 152.022 | −971 | −0,64 |
-| 4 | Upper East Side North | Manhattan | 150.040 | 144.733 | 5.307 | 3,67 |
-| 5 | Times Sq/Theatre District | Manhattan | 132.603 | 120.768 | 11.835 | 9,80 |
-| 6 | Penn Station/Madison Sq West | Manhattan | 129.494 | 113.152 | 16.342 | 14,44 |
-| 7 | Midtown East | Manhattan | 125.902 | 122.325 | 3.577 | 2,92 |
-| 8 | Lincoln Square East | Manhattan | 114.779 | 113.545 | 1.234 | 1,09 |
-| 9 | Union Sq | Manhattan | 112.147 | 96.319 | 15.828 | 16,43 |
-| 10 | East Village | Manhattan | 108.459 | 92.217 | 16.242 | 17,61 |
+| 1 | Midtown Center | Manhattan | 176.179 | 159.484 | 16.695 | 10,47 |
+| 2 | Upper East Side South | Manhattan | 166.404 | 152.458 | 13.946 | 9,15 |
+| 3 | Upper East Side North | Manhattan | 149.986 | 143.700 | 6.286 | 4,37 |
+| 4 | JFK Airport | Queens | 142.481 | 147.419 | −4.938 | −3,35 |
+| 5 | Times Sq/Theatre District | Manhattan | 130.209 | 119.037 | 11.172 | 9,39 |
+| 6 | Penn Station/Madison Sq West | Manhattan | 127.686 | 111.840 | 15.846 | 14,17 |
+| 7 | Midtown East | Manhattan | 124.812 | 121.134 | 3.678 | 3,04 |
+| 8 | Lincoln Square East | Manhattan | 114.226 | 112.395 | 1.831 | 1,63 |
+| 9 | Union Sq | Manhattan | 111.509 | 95.547 | 15.962 | 16,71 |
+| 10 | East Village | Manhattan | 107.535 | 91.378 | 16.157 | 17,68 |
 
 **Interpretación:** nueve de las diez zonas son de Manhattan y todas crecen, mientras que JFK
-es la única que baja. Union Sq y East Village entran al top 10 en lugar de LaGuardia y
-Murray Hill, que estaban noveno y décimo en 2024.
+es la única que baja (−3,35 %). Union Sq y East Village entran al top 10 en lugar de
+LaGuardia y Murray Hill, que estaban noveno y décimo en 2024.
 
 <details>
 <summary>Consulta: <code>sql/preguntas/p_a_top_zonas.sql</code></summary>
@@ -77,16 +79,19 @@ limit 10
 
 | Mes | Hora | Viajes en esa hora | Ingreso promedio por viaje (US$) | Promedio del mes (US$) |
 | --- | --- | --- | --- | --- |
-| 2024-03 | 5 (de 5:00 a 5:59) | 22.672 | 35,18 | 27,78 |
-| 2025-03 | 5 (de 5:00 a 5:59) | 32.583 | 33,75 | 27,18 |
+| 2024-03 | 5 (de 5:00 a 5:59) | 22.344 | 35,48 | 27,90 |
+| 2025-03 | 5 (de 5:00 a 5:59) | 32.054 | 35,32 | 27,97 |
 
 El promedio es el ingreso total de la hora dividido por sus viajes. No se promedian los
-promedios de cada zona.
+promedios de cada zona. Los viajes con R19 cuentan en la columna de viajes, pero no en los
+promedios: su total (US$ 4,51 de media) no es el precio del viaje. Con ellos, el promedio de
+2025 daba US$ 33,75 a las 5 y 27,18 en el mes, y parecía que bajaba contra 2024.
 
 **Interpretación:** en los dos meses, la hora de mayor ingreso por viaje es la de las 5 de la
-mañana, entre un 24 % y un 27 % por encima del promedio del mes. Es una hora de pocos viajes y más largos
-(en 2025, 5,6 millas contra 3,2 del resto del día), y casi uno de cada cinco va o viene de JFK
-o de LaGuardia (18 % contra 8 %; en 2024, 21 % contra 9 %).
+mañana, un 26 % / 27 % por encima del promedio del mes, y el valor casi no cambia entre los dos
+años. Es una hora de pocos viajes y más largos (en 2025, 5,6 millas contra 3,2 del resto del
+día), y casi uno de cada cinco va o viene de JFK o de LaGuardia (18 % contra 8 %; en 2024,
+21 % contra 9 %).
 
 <details>
 <summary>Consulta: <code>sql/preguntas/p_b_hora_mayor_ingreso.sql</code></summary>
@@ -104,7 +109,8 @@ por_hora as (
         m.inicio,
         a.hora,
         sum(a.viajes) as viajes,
-        sum(a.ingreso_total) as ingreso_total
+        sum(a.viajes_con_importe) as viajes_con_importe,
+        sum(a.ingreso_confiable) as ingreso_total
     from {{ ref('agg_zone_hour') }} as a
     join {{ ref('dim_date') }} as d on d.fecha = a.fecha
     join meses as m on d.anio = extract(year from m.inicio) and d.mes = extract(month from m.inicio)
@@ -117,10 +123,11 @@ ranking as (
         inicio,
         hora,
         viajes,
-        (ingreso_total / viajes)::numeric(10, 2) as ingreso_promedio,
+        (ingreso_total / viajes_con_importe)::numeric(10, 2) as ingreso_promedio,
+        -- Ingreso promedio de todo el mes, como referencia.
         (sum(ingreso_total) over (partition by periodo)
-            / sum(viajes) over (partition by periodo))::numeric(10, 2) as ingreso_promedio_mes,
-        row_number() over (partition by periodo order by ingreso_total / viajes desc, hora) as puesto
+            / sum(viajes_con_importe) over (partition by periodo))::numeric(10, 2) as ingreso_promedio_mes,
+        row_number() over (partition by periodo order by ingreso_total / viajes_con_importe desc, hora) as puesto
     from por_hora
 )
 
@@ -140,21 +147,23 @@ order by mes
 
 ## c. Viajes con `cbd_congestion_fee` mayor a 0 en 2025-03 y las 5 zonas con mayor proporción
 
-En 2025-03, el **73,90 %** de los viajes pagó el cargo de congestión. En 2024 el cargo no
+En 2025-03, el **73,98 %** de los viajes pagó el cargo de congestión. En 2024 el cargo no
 existía y la columna es nula.
 
 | Puesto | Zona | Barrio | Viajes | Con cargo | % con cargo |
 | --- | --- | --- | --- | --- | --- |
-| 1 | SoHo | Manhattan | 35.524 | 35.445 | 99,78 |
-| 2 | Greenwich Village South | Manhattan | 65.074 | 64.901 | 99,73 |
-| 3 | West Village | Manhattan | 97.339 | 97.070 | 99,72 |
-| 4 | Greenwich Village North | Manhattan | 59.306 | 59.141 | 99,72 |
-| 5 | East Village | Manhattan | 108.459 | 108.143 | 99,71 |
+| 1 | SoHo | Manhattan | 35.315 | 35.238 | 99,78 |
+| 2 | Greenwich Village South | Manhattan | 64.567 | 64.397 | 99,74 |
+| 3 | Greenwich Village North | Manhattan | 58.912 | 58.752 | 99,73 |
+| 4 | West Village | Manhattan | 96.816 | 96.549 | 99,72 |
+| 5 | East Village | Manhattan | 107.535 | 107.222 | 99,71 |
 
 Para entrar al ranking, una zona tiene que tener **al menos 100 viajes en el mes**. Sin ese
 mínimo, los primeros puestos serían Rikers Island (2 viajes) y Arden Heights (1 viaje), al
-100 %. Con cualquier mínimo entre 3 y 35.000 viajes, el top 5 es el mismo. El 73,90 % del
-mes se calcula sobre todas las zonas.
+100 %. Con cualquier mínimo entre 3 y 35.000 viajes, el top 5 es el mismo; por encima de
+35.315 sale SoHo, por su tamaño y no por su proporción. El mínimo deja afuera 33 de las 260
+zonas con viajes, que suman unos 1.000 viajes del mes. El 73,98 % del mes se calcula sobre
+todas las zonas.
 
 **Interpretación:** las cinco zonas están en el sur de Manhattan, dentro de la zona de
 congestión, donde casi todos los viajes que salen pagan el cargo. Las cinco están separadas
@@ -215,20 +224,23 @@ limit 5
 
 | Tipo de pago | Viajes 2024-03 | Propina % 2024-03 | Viajes 2025-03 | Propina % 2025-03 |
 | --- | --- | --- | --- | --- |
-| 0 – Flex Fare | 425.750 | 3,08 (3,34) | 916.106 | 2,00 (2,07) |
-| 1 – Tarjeta de crédito | 2.594.906 | 26,23 (22,28) | 2.683.910 | 26,23 (22,53) |
-| 2 – Efectivo | 465.840 | 0,00 (0,00) | 385.403 | 0,00 (0,00) |
-| 3 – Sin cargo | 16.152 | 0,07 (0,04) | 17.836 | 0,09 (0,03) |
-| 4 – Disputa | 31.385 | 0,20 (0,11) | 48.615 | 0,08 (0,06) |
+| 0 – Flex Fare | 425.917 | 3,08 (3,34) | 916.212 | 2,00 (2,07) |
+| 1 – Tarjeta de crédito | 2.594.989 | 26,23 (22,28) | 2.702.631 | 26,25 (22,54) |
+| 2 – Efectivo | 457.506 | 0,00 (0,00) | 373.421 | 0,00 (0,00) |
+| 3 – Sin cargo | 9.929 | 0,00 (0,01) | 10.340 | 0,02 (0,01) |
+| 4 – Disputa | 8.329 | 0,02 (0,01) | 11.016 | 0,02 (0,02) |
 
 El primer valor es el promedio del porcentaje de cada viaje. Entre paréntesis va el total de
 propinas sobre el total de tarifas, que no se deja arrastrar por viajes con tarifas de
-centavos (hay porcentajes de hasta 700.000 %). Los viajes con tarifa no positiva no entran.
+centavos (hay porcentajes de hasta 700.000 %). Los viajes con tarifa no positiva no entran:
+entre ellos, las 140.407 filas de 2025 con R19, todas de Flex Fare.
 
 **Interpretación:** con tarjeta, la propina ronda el 26 % de la tarifa en los dos años. El
 **0 % del efectivo no es interpretable**: el taxímetro solo registra la propina que se paga
 con tarjeta, y la que se deja en efectivo no queda en los datos. No significa que en
-efectivo no se deje propina.
+efectivo no se deje propina. Tampoco se interpretan Flex Fare, cuya propina probablemente se
+paga en la aplicación y no llega a los datos, ni "sin cargo" y "disputa", que no tienen una tarifa
+cobrada. Disputa tiene pocos viajes porque la mayoría eran cobros revertidos y R20 los rechaza.
 
 <details>
 <summary>Consulta: <code>sql/preguntas/p_d_propina_por_pago.sql</code></summary>
@@ -272,17 +284,17 @@ order by mes, f.payment_type
 
 | Aeropuerto | Viajes 2024-03 | Tarifa media 2024-03 (US$) | Viajes 2025-03 | Tarifa media 2025-03 (US$) |
 | --- | --- | --- | --- | --- |
-| JFK Airport | 181.975 | 64,79 | 180.699 | 64,18 |
-| LaGuardia Airport | 145.278 | 43,76 | 144.862 | 43,82 |
-| JFK o LaGuardia | 323.987 | 55,52 | 322.767 | 55,18 |
+| JFK Airport | 176.980 | 65,17 | 171.683 | 64,91 |
+| LaGuardia Airport | 143.920 | 43,80 | 142.869 | 43,83 |
+| JFK o LaGuardia | 317.701 | 55,66 | 311.913 | 55,39 |
 
 Los aeropuertos se identifican por el nombre de la zona en `dim_zone`. Un viaje entre los dos
 aeropuertos cuenta en cada uno, pero una sola vez en el total. Por eso el total es menor que
-la suma de las dos filas: hubo 3.266 viajes entre aeropuertos en 2024 y 2.794 en 2025.
+la suma de las dos filas: hubo 3.199 viajes entre aeropuertos en 2024 y 2.639 en 2025.
 
-**Interpretación:** el volumen de los aeropuertos queda casi igual (−0,4 %), mientras que
-el total de viajes crece un 14,65 %. JFK tiene una tarifa media 46 % mayor que LaGuardia
-porque está más lejos y tiene tarifa fija con Manhattan (`ratecode_id` 2, el 59 % de sus
+**Interpretación:** los viajes de aeropuerto bajan un 1,8 %, mientras que el total crece un
+14,78 %; la caída está en JFK (−3,0 %). JFK tiene una tarifa media 48 % mayor que LaGuardia
+porque está más lejos y tiene tarifa fija con Manhattan (`ratecode_id` 2, el 60 % de sus
 viajes en 2024).
 
 <details>
@@ -301,7 +313,7 @@ viajes_aeropuerto as (
         m.inicio,
         f.trip_id,
         f.fare_amount,
-        f.tarifa_confiable,
+        f.importe_confiable,
         zpu.zone as pu_zone,
         zdo.zone as do_zone
     from {{ ref('fact_trips') }} as f
@@ -315,7 +327,7 @@ viajes_aeropuerto as (
 
 -- Una fila por viaje y aeropuerto: si empieza y termina en el mismo, cuenta una vez.
 por_aeropuerto as (
-    select v.periodo, v.inicio, v.fare_amount, v.tarifa_confiable, a.aeropuerto
+    select v.periodo, v.inicio, v.fare_amount, v.importe_confiable, a.aeropuerto
     from viajes_aeropuerto as v
     cross join (values ('JFK Airport'), ('LaGuardia Airport')) as a (aeropuerto)
     where a.aeropuerto in (v.pu_zone, v.do_zone)
@@ -323,13 +335,13 @@ por_aeropuerto as (
 
 resultado as (
     select periodo, inicio, aeropuerto, count(*) as viajes,
-        avg(fare_amount) filter (where tarifa_confiable) as tarifa_media
+        avg(fare_amount) filter (where importe_confiable) as tarifa_media
     from por_aeropuerto
     group by periodo, inicio, aeropuerto
 
     union all
 
-    select periodo, inicio, 'JFK o LaGuardia', count(*), avg(fare_amount) filter (where tarifa_confiable)
+    select periodo, inicio, 'JFK o LaGuardia', count(*), avg(fare_amount) filter (where importe_confiable)
     from viajes_aeropuerto
     group by periodo, inicio
 )
@@ -350,14 +362,14 @@ order by mes, aeropuerto
 
 | Medida | 2024-03 | 2025-03 | Variación | Variación % |
 | --- | --- | --- | --- | --- |
-| Viajes | 3.534.033 | 4.051.870 | 517.837 | 14,65 |
-| Tarifa media (US$), sin R19 | 19,26 | 19,29 | 0,03 | 0,16 |
+| Viajes | 3.496.670 | 4.013.620 | 516.950 | 14,78 |
+| Tarifa media (US$), sin R19 | 19,24 | 19,22 | −0,01 | −0,07 |
 
-**Hipótesis:** el 89 % del aumento (461.727 de 517.837 viajes) es Flex Fare (`payment_type` 0) del
+**Hipótesis:** el 89 % del aumento (461.700 de 516.950 viajes) es Flex Fare (`payment_type` 0) del
 proveedor 2: viajes pedidos por aplicación. Desde el 5/1/2025 el cargo de congestión es de US$ 0,75
 por viaje en taxi amarillo y de US$ 1,50 en Uber y Lyft, lo que favorece la sustitución. El calendario
-no lo explica: los dos marzos (y las variaciones de a) tienen 5 sábados y 5 domingos, aunque estos crecen
-más (+21 y +22 % por día). Sin R19 la tarifa media casi no cambia (+0,16 %): la baja venía de esas filas.
+no lo explica: los dos marzos tienen 5 sábados y 5 domingos, aunque estos crecen más (+21,5 y +22,5 %
+por día). Sin R19 la tarifa media no cambia (−0,07 %): la baja que se veía venía de esas filas.
 
 <details>
 <summary>Consulta: <code>sql/preguntas/p_f_variacion_total.sql</code></summary>
@@ -374,7 +386,7 @@ por_mes as (
         m.periodo,
         m.inicio,
         count(*) as viajes,
-        avg(f.fare_amount) filter (where f.tarifa_confiable) as tarifa_media
+        avg(f.fare_amount) filter (where f.importe_confiable) as tarifa_media
     from {{ ref('fact_trips') }} as f
     join {{ ref('dim_date') }} as d on d.fecha = f.fecha
     join meses as m on d.anio = extract(year from m.inicio) and d.mes = extract(month from m.inicio)

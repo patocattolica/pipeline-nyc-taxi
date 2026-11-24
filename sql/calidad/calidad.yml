@@ -159,6 +159,143 @@ unit_tests:
         - {trip_id: j, reglas_rechazo: "", flags: ""}
         - {trip_id: k, reglas_rechazo: R06, flags: ""}
 
+  # R20: la fila positiva con las mismas claves que un reverso y el total opuesto se rechaza.
+  # Un total que difiere en un centavo o un proveedor distinto no son gemelas.
+  - name: r20_gemela_de_un_reverso
+    model: int_calidad
+    given:
+      - input: ref('stg_yellow_trips')
+        rows:
+          - {trip_id: l, source_file: data/raw/yellow/year=2025/month=03/x.parquet, dup_n: 1, vendor_id: 2,
+             pickup_at: "2025-03-10 10:00:00", dropoff_at: "2025-03-10 10:15:00",
+             trip_distance: 2, fare_amount: 15, total_amount: 20, passenger_count: 1,
+             pu_location_id: 100, do_location_id: 100, payment_type: 1, ratecode_id: 1}
+          - {trip_id: m, source_file: data/raw/yellow/year=2025/month=03/x.parquet, dup_n: 1, vendor_id: 2,
+             pickup_at: "2025-03-10 10:00:00", dropoff_at: "2025-03-10 10:15:00",
+             trip_distance: 2, fare_amount: -15, total_amount: -20, passenger_count: 1,
+             pu_location_id: 100, do_location_id: 100, payment_type: 1, ratecode_id: 1}
+          - {trip_id: n, source_file: data/raw/yellow/year=2025/month=03/x.parquet, dup_n: 1, vendor_id: 2,
+             pickup_at: "2025-03-10 10:00:00", dropoff_at: "2025-03-10 10:15:00",
+             trip_distance: 2, fare_amount: 15, total_amount: 19.99, passenger_count: 1,
+             pu_location_id: 100, do_location_id: 100, payment_type: 1, ratecode_id: 1}
+          - {trip_id: o, source_file: data/raw/yellow/year=2025/month=03/x.parquet, dup_n: 1, vendor_id: 1,
+             pickup_at: "2025-03-10 10:00:00", dropoff_at: "2025-03-10 10:15:00",
+             trip_distance: 2, fare_amount: 15, total_amount: 20, passenger_count: 1,
+             pu_location_id: 100, do_location_id: 100, payment_type: 1, ratecode_id: 1}
+      - input: ref('stg_taxi_zones')
+        rows:
+          - {location_id: 100}
+      - input: ref('reglas_calidad')
+        rows:
+          - {id: R06, severidad: rechazo}
+          - {id: R20, severidad: rechazo}
+    expect:
+      rows:
+        - {trip_id: l, reglas_rechazo: R20, flags: ""}
+        - {trip_id: m, reglas_rechazo: R06, flags: ""}
+        - {trip_id: n, reglas_rechazo: "", flags: ""}
+        - {trip_id: o, reglas_rechazo: "", flags: ""}
+
+  # Cambio de horario: el 9/3/2025 los relojes pasaron de las 2:00 a las 3:00. De 1:50 a 3:10
+  # pasaron 20 minutos, no 80; de 1:59:30 a 3:00:10, 40 segundos (R18). El día siguiente, sin
+  # cambio, de 1:50 a 3:10 sí pasan 80 minutos.
+  - name: duracion_con_cambio_de_horario
+    model: int_calidad
+    given:
+      - input: ref('stg_yellow_trips')
+        rows:
+          - {trip_id: p, source_file: data/raw/yellow/year=2025/month=03/x.parquet, dup_n: 1,
+             pickup_at: "2025-03-09 01:50:00", dropoff_at: "2025-03-09 03:10:00",
+             trip_distance: 2, fare_amount: 15, total_amount: 20, passenger_count: 1,
+             pu_location_id: 100, do_location_id: 100, payment_type: 1, ratecode_id: 1}
+          - {trip_id: q, source_file: data/raw/yellow/year=2025/month=03/x.parquet, dup_n: 1,
+             pickup_at: "2025-03-09 01:59:30", dropoff_at: "2025-03-09 03:00:10",
+             trip_distance: 0.1, fare_amount: 3, total_amount: 5, passenger_count: 1,
+             pu_location_id: 100, do_location_id: 100, payment_type: 1, ratecode_id: 1}
+          - {trip_id: r, source_file: data/raw/yellow/year=2025/month=03/x.parquet, dup_n: 1,
+             pickup_at: "2025-03-10 01:50:00", dropoff_at: "2025-03-10 03:10:00",
+             trip_distance: 2, fare_amount: 15, total_amount: 20, passenger_count: 1,
+             pu_location_id: 100, do_location_id: 100, payment_type: 1, ratecode_id: 1}
+      - input: ref('stg_taxi_zones')
+        rows:
+          - {location_id: 100}
+      - input: ref('reglas_calidad')
+        rows:
+          - {id: R18, severidad: advertencia, umbral: 60}
+    expect:
+      rows:
+        # extract(epoch ...) devuelve numeric con 6 decimales.
+        - {trip_id: p, duracion_seg: "1200.000000", flags: ""}
+        - {trip_id: q, duracion_seg: "40.000000", flags: R18}
+        - {trip_id: r, duracion_seg: "4800.000000", flags: ""}
+
+  # R10 solo mira la 264; R21, la subida en la 265 (bajar en la 265 no lleva regla); R22, la
+  # tarifa fija de JFK sin JFK; R23, el cargo del CBD fuera de 0 y 0,75 (el -0,75 de un reverso
+  # no cuenta: ese viaje lo rechaza R06).
+  - name: reglas_de_zona_y_de_cargos
+    model: int_calidad
+    given:
+      - input: ref('stg_yellow_trips')
+        rows:
+          - {trip_id: s, source_file: data/raw/yellow/year=2025/month=03/x.parquet, dup_n: 1,
+             pickup_at: "2025-03-10 10:00:00", dropoff_at: "2025-03-10 10:15:00",
+             trip_distance: 2, fare_amount: 15, total_amount: 20, passenger_count: 1,
+             pu_location_id: 265, do_location_id: 100, payment_type: 1, ratecode_id: 1}
+          - {trip_id: t, source_file: data/raw/yellow/year=2025/month=03/x.parquet, dup_n: 1,
+             pickup_at: "2025-03-10 10:00:00", dropoff_at: "2025-03-10 10:15:00",
+             trip_distance: 2, fare_amount: 15, total_amount: 20, passenger_count: 1,
+             pu_location_id: 100, do_location_id: 265, payment_type: 1, ratecode_id: 1}
+          - {trip_id: u, source_file: data/raw/yellow/year=2025/month=03/x.parquet, dup_n: 1,
+             pickup_at: "2025-03-10 10:00:00", dropoff_at: "2025-03-10 10:15:00",
+             trip_distance: 2, fare_amount: 15, total_amount: 20, passenger_count: 1,
+             pu_location_id: 264, do_location_id: 100, payment_type: 1, ratecode_id: 1}
+          - {trip_id: w, source_file: data/raw/yellow/year=2025/month=03/x.parquet, dup_n: 1,
+             pickup_at: "2025-03-10 10:00:00", dropoff_at: "2025-03-10 10:15:00",
+             trip_distance: 2, fare_amount: 70, total_amount: 80, passenger_count: 1,
+             pu_location_id: 100, do_location_id: 132, payment_type: 1, ratecode_id: 2}
+          - {trip_id: x, source_file: data/raw/yellow/year=2025/month=03/x.parquet, dup_n: 1,
+             pickup_at: "2025-03-10 10:00:00", dropoff_at: "2025-03-10 10:15:00",
+             trip_distance: 2, fare_amount: 70, total_amount: 80, passenger_count: 1,
+             pu_location_id: 100, do_location_id: 100, payment_type: 1, ratecode_id: 2}
+          - {trip_id: y, source_file: data/raw/yellow/year=2025/month=03/x.parquet, dup_n: 1,
+             pickup_at: "2025-03-10 10:00:00", dropoff_at: "2025-03-10 10:15:00",
+             trip_distance: 2, fare_amount: 15, total_amount: 20, passenger_count: 1,
+             pu_location_id: 100, do_location_id: 100, payment_type: 1, ratecode_id: 1,
+             cbd_congestion_fee: 1.25}
+          - {trip_id: z, source_file: data/raw/yellow/year=2025/month=03/x.parquet, dup_n: 1,
+             pickup_at: "2025-03-10 10:00:00", dropoff_at: "2025-03-10 10:15:00",
+             trip_distance: 2, fare_amount: 15, total_amount: 20, passenger_count: 1,
+             pu_location_id: 100, do_location_id: 100, payment_type: 1, ratecode_id: 1,
+             cbd_congestion_fee: 0.75}
+          - {trip_id: aa, source_file: data/raw/yellow/year=2025/month=03/x.parquet, dup_n: 1,
+             pickup_at: "2025-03-10 10:00:00", dropoff_at: "2025-03-10 10:15:00",
+             trip_distance: 2, fare_amount: -15, total_amount: -20, passenger_count: 1,
+             pu_location_id: 100, do_location_id: 100, payment_type: 1, ratecode_id: 1,
+             cbd_congestion_fee: -0.75}
+      - input: ref('stg_taxi_zones')
+        rows:
+          - {location_id: 100}
+          - {location_id: 132}
+          - {location_id: 264}
+          - {location_id: 265}
+      - input: ref('reglas_calidad')
+        rows:
+          - {id: R06, severidad: rechazo}
+          - {id: R10, severidad: advertencia}
+          - {id: R21, severidad: advertencia}
+          - {id: R22, severidad: advertencia}
+          - {id: R23, severidad: advertencia, umbral: 0.75}
+    expect:
+      rows:
+        - {trip_id: s, reglas_rechazo: "", flags: R21}
+        - {trip_id: t, reglas_rechazo: "", flags: ""}
+        - {trip_id: u, reglas_rechazo: "", flags: R10}
+        - {trip_id: w, reglas_rechazo: "", flags: ""}
+        - {trip_id: x, reglas_rechazo: "", flags: R22}
+        - {trip_id: y, reglas_rechazo: "", flags: R23}
+        - {trip_id: z, reglas_rechazo: "", flags: ""}
+        - {trip_id: aa, reglas_rechazo: R06, flags: ""}
+
   # Reconciliación sobre datos sintéticos: un mes que cuadra y otro al que le falta una fila.
   - name: reconciliacion_detecta_filas_perdidas
     model: reporte_calidad_mes

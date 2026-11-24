@@ -28,11 +28,13 @@ select
     t.airport_fee,
     t.cbd_congestion_fee,
     t.flags,
-    -- Derivadas. Las aceptadas tienen bajada posterior a la subida (R02 y R03 rechazan).
-    (extract(epoch from t.dropoff_at - t.pickup_at) / 60.0)::numeric(10, 2) as duracion_min,
+    -- Derivadas. duracion_seg viene de int_calidad: el tiempo real, con el cambio de horario.
+    -- R02 rechaza la duración negativa; la nula (R03) queda aceptada, con duración 0.
+    (t.duracion_seg / 60.0)::numeric(10, 2) as duracion_min,
+    -- Nula sin duración o sin distancia: un 0 por distancia no informada bajaría los promedios.
     -- El cast va afuera del CASE: adentro, Postgres pierde los decimales fijados.
-    (case when t.dropoff_at > t.pickup_at
-          then t.trip_distance / (extract(epoch from t.dropoff_at - t.pickup_at) / 3600.0)
+    (case when t.duracion_seg > 0 and t.trip_distance > 0
+          then t.trip_distance / (t.duracion_seg / 3600.0)
      end)::numeric(10, 2) as velocidad_mph,
     t.pickup_at::date as fecha,
     extract(hour from t.pickup_at)::smallint as hora,

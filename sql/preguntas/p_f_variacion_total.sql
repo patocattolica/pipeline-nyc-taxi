@@ -12,7 +12,7 @@ por_mes as (
         m.periodo,
         m.inicio,
         count(*) as viajes,
-        avg(f.fare_amount) filter (where f.tarifa_confiable) as tarifa_media
+        avg(f.fare_amount) filter (where f.importe_confiable) as tarifa_media
     from {{ ref('fact_trips') }} as f
     join {{ ref('dim_date') }} as d on d.fecha = f.fecha
     join meses as m on d.anio = extract(year from m.inicio) and d.mes = extract(month from m.inicio)
