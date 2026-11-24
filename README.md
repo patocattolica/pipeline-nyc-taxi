@@ -15,8 +15,10 @@ anotando cada decisión que tomamos, con las mediciones que la justifican.
 
 Solo hace falta tener Docker (con Compose), Make y Python 3.11. Pusimos Postgres en un
 contenedor y dejamos que las dependencias de Python se instalen solas en un entorno virtual,
-para que cualquiera pueda correrlo sin configurar nada. Desde una copia nueva del repositorio
-alcanza con:
+para que cualquiera pueda correrlo sin configurar nada. Además, la máquina necesita conexión a
+internet (para bajar los archivos de la TLC, la imagen de Postgres y los paquetes), unos 7 GB
+libres de disco (Postgres ocupa casi 5 GB con los dos meses) y el puerto 5435 libre. Desde una
+copia nueva del repositorio alcanza con:
 
 ```bash
 git clone https://github.com/patocattolica/pipeline-nyc-taxi.git
@@ -24,9 +26,16 @@ cd pipeline-nyc-taxi
 make all MES=2025-03
 ```
 
+Make busca el comando `python3.11`. Si Python 3.11 está instalado con otro nombre o en otra
+carpeta (por ejemplo, con `uv python install 3.11`), se le pasa la ruta:
+
+```bash
+make all MES=2025-03 PYTHON_BASE=/ruta/a/python3.11
+```
+
 La primera vez, Make copia `.env.example` a `.env` (son las credenciales del Postgres local,
-que solo escucha en 127.0.0.1), crea el entorno `.venv-dlt` con las versiones que fijamos en
-`requirements.lock` y levanta el contenedor. Después le pasa la corrida a Dagster, que baja los
+que solo escucha en 127.0.0.1), levanta el contenedor y crea el entorno `.venv-dlt` con las
+versiones que fijamos en `requirements.lock`. Después le pasa la corrida a Dagster, que baja los
 dos meses y corre todas las etapas. Si cualquier etapa falla, `make` termina con un código
 distinto de 0.
 
@@ -39,6 +48,13 @@ En Windows se corre igual, desde Git Bash, con Python 3.11 instalado (`py -3.11`
 detecta el sistema y ajusta las rutas del entorno virtual. Dejamos `PGHOST=127.0.0.1` y no
 `localhost` porque en Windows `localhost` prueba primero IPv6 y cada conexión esperaba más de
 dos minutos antes de caer a IPv4.
+
+### Tablero opcional (Metabase)
+
+`make viz`, después de `make all`, levanta Metabase en http://localhost:3001 y arma solo el
+tablero "Comparación interanual" (`src/tablero.py`). El usuario es `MB_ADMIN_EMAIL` y la clave
+`MB_ADMIN_PASSWORD`, los dos del `.env`. Cada tarjeta lee una tabla que ya calculó dbt en el
+esquema `analytics`, así que muestra los mismos números que `RESULTADOS.md`.
 
 ### Observabilidad opcional (Grafana)
 
@@ -54,7 +70,53 @@ clave está en `GF_ADMIN_PASSWORD` del `.env`) con el tablero "Pipeline de taxis
 
 Son 6 contenedores que, con el tablero abierto, usan unos 350 MiB en total (medido con cAdvisor
 en una corrida); cada uno tiene un tope de memoria en `compose.yaml`. No arrancan con `make all`.
-Para apagarlos: `docker compose --profile obs down`.
+La probamos en Linux. En Docker Desktop (Windows o Mac), cAdvisor puede no arrancar, porque lee
+carpetas del sistema del host.
+
+### Apagar
+
+Para apagar solo la observabilidad y dejar Postgres arriba:
+
+```bash
+docker compose stop postgres_exporter cadvisor prometheus loki alloy grafana
+```
+
+Para apagar todo, Metabase y la observabilidad incluidas:
+
+```bash
+docker compose --profile viz --profile obs down
+```
+
+Los datos quedan en los volúmenes de Docker y vuelven con el próximo `make all`. Solo
+`docker compose down -v` los borra.
+
+## Estructura del repositorio
+
+```text
+Makefile                 comando único (make all MES=AAAA-MM) y comandos auxiliares
+compose.yaml             Postgres, y los servicios opcionales de Metabase y observabilidad
+.env.example             plantilla de credenciales y puertos (make all la copia a .env)
+requirements.txt/.lock   dependencias de Python con versiones fijas
+dbt_project.yml          proyecto dbt (profiles.yml lee las credenciales del entorno)
+.dlt/config.toml         configuración de la ingesta con dlt
+contracts/               contrato de esquema del archivo de viajes
+src/pipeline/            un módulo por etapa: descarga, esquema, ingesta, curada
+src/orquestacion/        assets de Dagster
+src/tablero.py           tablero opcional de Metabase
+sql/staging/             renombre y tipos, sin filtrar
+sql/calidad/             reglas, aceptados, cuarentena, reporte y unit tests
+sql/curada/              columnas derivadas de la capa curada
+sql/modelo/              fact_trips, dim_zone, dim_date, agg_zone_hour
+sql/preguntas/           una consulta por pregunta
+seeds/                   catálogo de reglas de calidad
+tests/                   tests de pytest y tests de dbt (tests/dbt/)
+analisis/                exploración de los datos y prueba de ingesta
+observabilidad/          configuración de Prometheus, Loki, Alloy y Grafana
+docs/decisiones.md       decisiones y mediciones
+reglas.md                evidencia de cada regla de calidad
+RESULTADOS.md            respuestas a las seis preguntas
+data/                    datos crudos y curados (fuera de Git, la crea el pipeline)
+```
 
 ## Cómo lo armamos
 
@@ -194,23 +256,26 @@ promedios. A `fact_trips` le agregamos dos columnas, `duracion_confiable` e
 
 ## Tiempo y memoria
 
-En nuestra máquina (8 núcleos y 14 GB de RAM), `make all MES=2025-03` tardó **6 minutos y 13
-segundos** con los datos ya descargados. Desde cero, con la descarga y el entorno nuevo, tarda
-unos 14 minutos. Casi todo ese tiempo se lo lleva la evaluación de las reglas de calidad sobre
-los 7,7 millones de filas.
+Para medirlo como lo vería otra persona, clonamos el repositorio en una carpeta nueva, sin
+`.env`, sin entorno virtual, sin datos y con un volumen de Postgres vacío, y corrimos
+`make all MES=2025-03` en una máquina de 12 núcleos y 14 GB de RAM. Tardó **12 minutos y 8
+segundos**, con la creación del entorno y la descarga incluidas. Con los datos ya descargados,
+una corrida tarda unos 6 minutos. Casi todo ese tiempo se lo lleva la evaluación de las reglas
+de calidad sobre los 7,7 millones de filas. Esa corrida dio los mismos conteos y los mismos
+sha256 de la capa curada que nuestra copia de trabajo.
 
-Lo medimos con `/usr/bin/time -v`, y el pico de memoria (*Maximum resident set size*) fue de
-**691 MiB**. Ese valor es el del proceso más grande y no incluye a Postgres, que corre en Docker:
-al contenedor lo medimos aparte con `docker stats` y llegó a 1,48 GiB, contra el tope de
-1,5 GiB que le fijamos en `compose.yaml`. En total, el pipeline queda en unos 2,5 GB, con margen
-para una notebook de 8 GB. Para lograrlo, cada etapa corre como un proceso aparte que libera su
+Con `/usr/bin/time -v`, el pico de memoria (*Maximum resident set size*) fue de **691 MiB**.
+Ese valor es el del proceso más grande y no incluye a Postgres, que corre en Docker: al
+contenedor lo medimos aparte con `docker stats`, cada 5 segundos durante la corrida desde
+cero, y llegó a **1,07 GiB**, contra el tope de 1,5 GiB que le fijamos en `compose.yaml`. En
+total, el pipeline queda en menos de 2 GB, con margen para una notebook de 8 GB. Para lograrlo, cada etapa corre como un proceso aparte que libera su
 memoria al terminar, la ingesta lee el archivo de a lotes y DuckDB tiene la memoria acotada.
 
 ## Tests
 
-`make test` corre 19 tests de pytest sobre la descarga, la ingesta, la capa curada y la
-orquestación. Los tests de dbt, 65 en total, corren dentro de `make all`. Los tres que pide la
-consigna son estos:
+`make test` corre 23 tests de pytest sobre la descarga, la ingesta, la capa curada, la
+orquestación y el tablero. Los tests de dbt corren dentro de `make all`: son 46 (39 tests de
+datos y 7 unit tests con datos sintéticos). Los tres que pide la consigna son estos:
 - **Regla de calidad sobre datos sintéticos:** `reglas_propias_en_el_borde` y los otros unit
   tests de `sql/calidad/calidad.yml` prueban cada umbral justo a un lado y al otro.
 - **Idempotencia de la ingesta:** `test_segunda_corrida_no_descarga` y
