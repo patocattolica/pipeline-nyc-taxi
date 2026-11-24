@@ -1,6 +1,6 @@
 {{ config(materialized='table') }}
 
--- Evalúa las 18 reglas sobre cada viaje. No descarta filas: separa las reglas violadas en
+-- Evalúa las 19 reglas sobre cada viaje. No descarta filas: separa las reglas violadas en
 -- rechazos y advertencias según la severidad del catálogo (seeds/reglas_calidad.csv).
 with parametros as (
     -- El catálogo en una sola fila: umbrales y lista de reglas que rechazan.
@@ -10,6 +10,7 @@ with parametros as (
         max(umbral) filter (where id = 'R17') as duracion_max_min,
         max(umbral_2) filter (where id = 'R17') as tarifa_min_por_min,
         max(umbral) filter (where id = 'R18') as duracion_min_seg,
+        max(umbral) filter (where id = 'R19') as tarifa_min,
         -- coalesce: sin reglas de rechazo, array_agg da nulo y las reglas se perderían.
         coalesce(array_agg(id order by id) filter (where severidad = 'rechazo'), '{}') as ids_rechazo
     from {{ ref('reglas_calidad') }}
@@ -66,6 +67,8 @@ cross join lateral (
         case when d.segundos / 60.0 > p.duracion_max_min
               and v.fare_amount < p.tarifa_min_por_min * d.segundos / 60.0 then 'R17' end,
         -- Duración positiva pero menor al mínimo (la nula o negativa la cubren R02 y R03).
-        case when d.segundos > 0 and d.segundos < p.duracion_min_seg then 'R18' end
+        case when d.segundos > 0 and d.segundos < p.duracion_min_seg then 'R18' end,
+        -- Tarifa negativa con un total que se cobró (el total negativo lo cubre R06).
+        case when v.fare_amount < p.tarifa_min and v.total_amount > p.tarifa_min then 'R19' end
     ], null) as violadas
 ) as c

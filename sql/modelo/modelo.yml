@@ -65,6 +65,12 @@ models:
           velocidad se calculan solo con los verdaderos; las de viajes e ingreso, con todos.
         data_tests:
           - not_null
+      - name: tarifa_confiable
+        description: >
+          Falso si el viaje tiene R19 (fare_amount negativo con total_amount positivo). Los
+          promedios de fare_amount se calculan solo con los verdaderos; viajes e ingreso, con todos.
+        data_tests:
+          - not_null
 
   - name: agg_zone_hour
     description: >

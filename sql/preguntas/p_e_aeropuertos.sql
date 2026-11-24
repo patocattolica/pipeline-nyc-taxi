@@ -1,6 +1,6 @@
 -- e. Viajes y tarifa media de los que empiezan o terminan en JFK o LaGuardia, identificados
 -- por nombre de zona, en los dos meses. Un viaje entre los dos aeropuertos cuenta en cada
--- uno, pero una sola vez en el total.
+-- uno, pero una sola vez en el total. La tarifa media excluye los viajes con R19.
 with meses as (
     select 'asignado' as periodo, to_date('{{ var("mes") }}', 'YYYY-MM') as inicio
     union all
@@ -13,6 +13,7 @@ viajes_aeropuerto as (
         m.inicio,
         f.trip_id,
         f.fare_amount,
+        f.tarifa_confiable,
         zpu.zone as pu_zone,
         zdo.zone as do_zone
     from {{ ref('fact_trips') }} as f
@@ -26,20 +27,21 @@ viajes_aeropuerto as (
 
 -- Una fila por viaje y aeropuerto: si empieza y termina en el mismo, cuenta una vez.
 por_aeropuerto as (
-    select v.periodo, v.inicio, v.fare_amount, a.aeropuerto
+    select v.periodo, v.inicio, v.fare_amount, v.tarifa_confiable, a.aeropuerto
     from viajes_aeropuerto as v
     cross join (values ('JFK Airport'), ('LaGuardia Airport')) as a (aeropuerto)
     where a.aeropuerto in (v.pu_zone, v.do_zone)
 ),
 
 resultado as (
-    select periodo, inicio, aeropuerto, count(*) as viajes, avg(fare_amount) as tarifa_media
+    select periodo, inicio, aeropuerto, count(*) as viajes,
+        avg(fare_amount) filter (where tarifa_confiable) as tarifa_media
     from por_aeropuerto
     group by periodo, inicio, aeropuerto
 
     union all
 
-    select periodo, inicio, 'JFK o LaGuardia', count(*), avg(fare_amount)
+    select periodo, inicio, 'JFK o LaGuardia', count(*), avg(fare_amount) filter (where tarifa_confiable)
     from viajes_aeropuerto
     group by periodo, inicio
 )

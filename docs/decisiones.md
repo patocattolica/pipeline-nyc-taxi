@@ -21,7 +21,9 @@ como **2025-03 / 2024-03** cuando corresponde.
 | 13. Modelo estrella, tabla agregada y las seis preguntas | Hecho | `sql/modelo/`, `sql/preguntas/`, `RESULTADOS.md` |
 | 14. `make all` de punta a punta, dos veces, con los mismos conteos | Hecho | `Makefile`, `.env.example`, `.dlt/config.toml` |
 | 16. Orquestación con Dagster | Hecho en la rama `dagster` | `src/orquestacion/definitions.py`, `Makefile`, `tests/test_orquestacion.py` |
-| 15 y 17 en adelante | Pendiente | — |
+| 15. Tiempo y pico de RAM de `make all` en la propia máquina | Hecho en la rama `fix-tarifas` | Sección "Medición de `make all`" de este archivo |
+| R19 (tarifa negativa con total positivo) | Hecho en la rama `fix-tarifas` | `seeds/reglas_calidad.csv`, `sql/calidad/`, `sql/modelo/fact_trips.sql`, `sql/preguntas/` |
+| 17 en adelante | Pendiente | — |
 
 **Ramas:**
 - `master`: diseño original, con PyAirbyte.
@@ -240,7 +242,7 @@ de control cubre toda la Parte 1. La URL queda vacía para la ingesta.
 | Tests | 4 de descarga y 4 de ingesta: decisión de salteo, renombre y columna faltante, corte por esquema y aviso por columna nueva |
 
 **Pendientes del diseño con dlt:**
-- **Medición.** Repetir la medición en la notebook de 8 GB.
+- **Medición (resuelto en el paso 15).** Ver la sección "Medición de `make all`".
 - **Tabla intermedia de dlt (resuelto en el paso 14).** El merge dejaba
   `raw_staging.yellow_trips` con el último mes cargado (3.582.628 filas, 859 MB). Ahora dlt
   la vacía al terminar cada carga, con `truncate_staging_dataset = true` en
@@ -354,7 +356,8 @@ tabla intermedia de dlt y 1,96 GB de staging. Faltan las tablas de calidad y el 
 | `dbt test` | 16 tests pasan, los 2 unit tests incluidos |
 
 **Pendiente:** `int_calidad` tarda unos 4 minutos, el doble que la prueba sintética del
-diseño original. Medirlo en la notebook de 8 GB y, si hace falta, optimizarlo.
+diseño original. Medido en el paso 15: el pipeline completo entra holgado en 8 GB, así que
+no se optimizó.
 
 ### Reporte de calidad y reconciliación (paso 11)
 
@@ -461,6 +464,31 @@ positiva y muy corta: unos 35.000 viajes aceptados por mes de menos de 1 minuto.
 - `dbt test`: 21 tests pasan. Huellas nuevas de la capa curada: 2024 `db3c1e4d…`, 2025
   `eb25f5cf…` (cambian porque la columna `flags` cambió).
 
+
+### R19: tarifa negativa con total positivo (agregada después del paso 16)
+
+El informe de corrección señaló que los viajes con `fare_amount` negativo y `total_amount`
+positivo bajaban la tarifa media de la pregunta f. Ninguna regla los miraba: R06 solo ve el
+total. Se agregó **R19, advertencia, umbral 0** en el catálogo. Evidencia y justificación en
+`reglas.md`.
+
+- Cambiaron el seed y una línea de `int_calidad`, y hay un unit test nuevo
+  (`r19_tarifa_negativa_con_total_positivo`): tarifa −1 con total 5 marca R19; tarifa 0 con
+  total 5 y tarifa −1 con total 0 no; tarifa −1 con total −5 lo rechaza R06, sin R19.
+- La cuarentena no cambia, porque es una advertencia. R19 marca 140.446 / 14.295 filas, de las
+  que 140.403 / 14.291 quedan aceptadas. Todas son del proveedor 2 con `payment_type` 0.
+- **Regla para las preguntas:** `fact_trips` suma `tarifa_confiable` (falso si el viaje tiene
+  R19), igual que `duracion_confiable` para R18. Los promedios de `fare_amount` (preguntas e y
+  f) usan solo los verdaderos; los conteos y el ingreso, todos. La d no cambia: ya filtra
+  `fare_amount` > 0.
+- Efecto: en f, la tarifa media pasa de 19,17 → 18,47 (−3,66 %) a 19,26 → 19,29 (+0,16 %).
+  En e, JFK 2025 pasa de 64,15 a 64,18 y el total de 2025, de 55,16 a 55,18 (83 viajes).
+- **Calendario (pregunta a):** los dos marzos tienen 5 sábados y 5 domingos, así que no hay un
+  fin de semana de más. 2025 tiene 5 lunes y 2024, 5 viernes, lo que juega en contra de 2025.
+  Por día, los sábados y domingos crecen +21 % y +22 %, y el resto de la semana entre +10 % y
+  +16 %.
+- Huellas nuevas de la capa curada (cambian porque cambió la columna `flags`): 2024
+  `ea6554d1…`, 2025 `361e1449…`.
 
 ## Modelo y preguntas (Parte 5, paso 13)
 
@@ -570,7 +598,7 @@ revisar-mes, postgres, entorno -> descarga -> ingesta -> transformacion (dbt bui
 | `make test` | 9 pasan |
 
 Casi todo el tiempo de una corrida es `dbt build`, y dentro de él `int_calidad` (unos 4
-minutos). Falta medir tiempo y pico de RAM en la notebook de 8 GB (paso 15).
+minutos). El tiempo y el pico de RAM están en la sección "Medición de `make all`" (paso 15).
 
 ## Orquestación con Dagster (paso 16)
 
@@ -704,5 +732,27 @@ de pytest y, si se corre pytest suelto sin el manifiesto, el archivo se saltea c
 | RAM pico (`/usr/bin/time`, el proceso más grande, sin contar Postgres) | 704 MiB en la corrida 1 y 1.090 MiB en la corrida 2, en una máquina de 12 CPU y 14 GiB |
 
 Las corridas por Dagster tardan lo mismo que con Make: casi todo el tiempo sigue siendo
-`dbt build`, y dentro de él `int_calidad`. Falta medir tiempo y pico de RAM en la notebook de
-8 GB (paso 15).
+`dbt build`, y dentro de él `int_calidad`. El tiempo y el pico de RAM están en la sección
+"Medición de `make all`" (paso 15).
+
+## Medición de `make all` (paso 15, después de R19)
+
+Medido con `/usr/bin/time -v make all MES=2025-03`, con los datos ya descargados e ingeridos
+(descarga e ingesta se saltean por hash) y el contenedor de Postgres ya levantado. La memoria
+de Postgres se muestreó cada 5 s con `docker stats`, porque `/usr/bin/time` no ve los procesos
+del contenedor.
+
+| Medida | Resultado |
+| --- | --- |
+| Tiempo total (`Elapsed (wall clock) time`) | 5 min 49 s (349 s), código 0 |
+| Pico de RAM (`Maximum resident set size`) | 1.070.088 kB (1.045 MiB) |
+| Pico de memoria del contenedor de Postgres (`docker stats`) | 1,48 GiB, contra el tope de 1,5 GiB de `mem_limit` |
+| `dbt build` | 62 de 62 (dos más que antes: el unit test de R19 y el `not_null` de `tarifa_confiable`) |
+| `make conteos` | Leídas 3.582.628 / 4.145.257; aceptadas 3.534.033 / 4.051.870; cuarentena 48.595 / 93.387; diferencia 0 |
+| Máquina | La propia: 8 CPU (`nproc`) y 14 GiB de RAM |
+
+- `Maximum resident set size` es el pico del proceso más grande que lanzó `make`, no la suma
+  de todos los procesos. Sumado al pico de Postgres, el pipeline queda en unos 2,5 GiB.
+- La consigna pide medir en la propia máquina y que el pipeline corra en una notebook de
+  8 GB, que es donde lo prueba el docente. El pico medido (unos 2,5 GiB) entra holgado, y
+  Postgres no puede pasar de 1,5 GiB porque lo limita `mem_limit` en `compose.yaml`.
