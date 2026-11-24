@@ -24,6 +24,7 @@ como **2025-03 / 2024-03** cuando corresponde.
 | 15. Tiempo y pico de RAM de `make all` en la propia máquina | Hecho en la rama `fix-tarifas` | Sección "Medición de `make all`" de este archivo |
 | R19 (tarifa negativa con total positivo) | Hecho en la rama `fix-tarifas` | `seeds/reglas_calidad.csv`, `sql/calidad/`, `sql/modelo/fact_trips.sql`, `sql/preguntas/` |
 | Revisión de reglas: cambio de horario, R03, R10, R19 en el ingreso, R20 a R23 | Hecho en la rama `fix-reglas` | Sección "Revisión de reglas" de este archivo, `reglas.md` |
+| Tablero opcional en Metabase (`make viz`), fuera de `make all` | Hecho en la rama `metabase` | Sección "Tablero en Metabase" de este archivo, `src/tablero.py`, `tests/test_tablero.py` |
 | 17 en adelante | Pendiente | — |
 
 **Ramas:**
@@ -116,23 +117,34 @@ está en `reglas.md`. Las consultas que lo sostienen están en `analisis/explora
 **Criterio general:**
 - **Rechazo:** la fila no es un viaje válido del mes, o un campo que el modelo necesita es
   imposible.
-- **Advertencia:** el viaje existió y su importe es válido, pero un atributo es dudoso.
+- **Advertencia:** el viaje existió, pero un atributo es dudoso. Si ese atributo entra en
+  una métrica, la fila se excluye solo de esa métrica (`duracion_confiable`,
+  `importe_confiable`).
 
-**Decisiones principales:**
-- **R03 (bajada igual a la subida): rechazo.** Manda a la cuarentena al 100 % del
-  proveedor 7, que es el 0,52 % de 2025.
+**Decisiones principales** (estado actual; los cambios posteriores al paso 10 están en las
+secciones de R18, R19 y "Revisión de reglas"):
+- **R03 (bajada igual a la subida): advertencia.** Empezó como rechazo y mandaba a la
+  cuarentena al 100 % del proveedor 7, el 0,52 % de 2025. Ahora la fila se acepta y queda
+  fuera de las métricas de duración.
 - **R04 (distancia ≤ 0): advertencia.** Son 103.722 / 87.168 filas, y la mayoría son viajes
   reales: tarifa negociada, Flex Fare o distancia no informada.
 - **R05 (más de 500 millas): advertencia.** Todas las filas que la cumplen ya las rechazan
   R16 o R03.
-- **R06 (importe negativo): rechazo.** Son reversos del proveedor 2. Su gemela positiva
-  queda aceptada (limitación documentada).
+- **R06 (importe negativo): rechazo.** Son reversos del proveedor 2. Su gemela positiva la
+  rechaza R20.
 - **R09 (zona inexistente): rechazo.** Una clave sin fila en `dim_zone` rompe el modelo
   estrella.
+- **R10 (zona desconocida): advertencia, solo para la 264.** La 265 ("Outside of NYC") es
+  un destino conocido; la subida ahí la marca R21.
 - **Reglas propias:**
   - R16, velocidad mayor a 80 mph.
   - R17, más de 6 h con una tarifa menor a US$ 0,35 por minuto. Es la mitad de lo mínimo
     que cobra el taxímetro: un viaje de más de 6 horas tiene que tener una tarifa acorde.
+  - R18, duración menor a 1 minuto (advertencia).
+  - R19, tarifa negativa con total positivo (advertencia).
+  - R20, gemela positiva de un reverso (rechazo).
+  - R21, subida fuera de NYC; R22, tarifa fija de JFK sin JFK; R23, cargo del CBD fuera de
+    catálogo (advertencias).
 - **Reprocesar con otro umbral:** los umbrales viven en el catálogo, no en el código. Un
   viaje real que cae en una regla queda en la cuarentena, aparece en el reporte y se puede
   reprocesar.
@@ -398,9 +410,10 @@ se construyen en 6 s. `dbt test`: 20 tests pasan; pytest: 8.
 - **Las columnas derivadas se calculan en dbt** (`sql/curada/trips_curados.sql`, vista sobre
   `trips_aceptados`): quedan junto al resto del SQL y tienen tests. DuckDB solo lee y
   escribe. La vista agrega:
-  - `duracion_min`, `velocidad_mph` (nula si la duración no es positiva; en las aceptadas no
-    pasa, porque R02 y R03 rechazan), `fecha`, `hora` y `dia_semana` de la subida (ISO:
-    1 = lunes, 7 = domingo).
+  - `duracion_min`, `velocidad_mph`, `fecha`, `hora` y `dia_semana` de la subida (ISO:
+    1 = lunes, 7 = domingo). Desde la revisión de reglas, la duración sale de `duracion_seg`
+    (con el cambio de horario) y la velocidad es nula si la duración o la distancia no son
+    positivas.
   - `propina_pct` = 100 × `tip_amount` / `fare_amount`, nula si la tarifa no es positiva.
   - `pu_borough`, `pu_zone`, `do_borough` y `do_zone`, de `stg_taxi_zones`.
   - Las derivadas son `numeric(10,2)`, como la distancia y los importes. El cast va afuera
@@ -835,3 +848,47 @@ de pago 6 como rechazo (hoy hay 0 casos) y R16 solo para duraciones de 60 s o m�
 | Duración media confiable | 15,78 / 16,15 min |
 | `make test` | 19 pasan |
 | Huellas de la capa curada (las dos corridas) | 2024 `75cce5ab…`, 2025 `dade5352…` |
+
+## Tablero en Metabase (opcional, fuera del pipeline)
+
+`make viz`, después de `make all`, levanta Metabase en http://localhost:3001 y arma el tablero
+"Comparación interanual" (colección "Taxis NYC"): el mes asignado contra el mismo mes de 2024.
+El usuario administrador sale de `MB_ADMIN_EMAIL` y `MB_ADMIN_PASSWORD` (`.env.example`).
+
+### Por qué y con qué límites
+
+- **Es una capa de presentación, no una etapa.** La consigna se resuelve con las preguntas en
+  SQL y `RESULTADOS.md`; el tablero sirve para mostrar la comparación en la defensa. Por eso
+  queda fuera de `make all` y de Dagster: el servicio tiene el perfil `viz` de Compose, así que
+  `docker compose up` y `make postgres` no lo levantan.
+- **No calcula nada propio.** Cada tarjeta es un `SELECT` sobre `analytics.p_*`,
+  `agg_zone_hour` o los reportes de calidad, así los números son los de `RESULTADOS.md`. Las dos
+  tarjetas por hora repiten el cálculo de la pregunta b (ingreso confiable sobre viajes con
+  importe, sin R19). `tests/test_tablero.py` falla si una tarjeta lee otra tabla.
+- **Reproducible con un comando.** Metabase guarda su configuración (usuario, conexión, tarjetas)
+  en una base H2 dentro del volumen `metabase_data`, que no está en Git. En lugar de exportarla,
+  `src/tablero.py` arma todo por la API de Metabase: crea el usuario la primera vez, la conexión
+  a Postgres (limitada al esquema `analytics`), la colección, las tarjetas y el tablero. Busca
+  cada cosa por nombre y actualiza lo que existe, así que correrlo dos veces no duplica nada, y
+  si se borra el volumen lo rearma. Usa solo la biblioteca estándar (`urllib`): no agrega
+  dependencias.
+- **Versión fijada:** `metabase/metabase:v0.65.3.6`. Telemetría y búsqueda de actualizaciones
+  apagadas (`MB_ANON_TRACKING_ENABLED`, `MB_CHECK_FOR_UPDATES`).
+- **Puerto 3001**, porque el 3000 es el de `make ui` (Dagster). Se cambia con `MB_PUERTO`.
+
+### Memoria
+
+Montón de la JVM en 768 MB (`JAVA_OPTS=-Xmx768m`). Con el tablero abierto, el contenedor usa
+1,27 GiB de memoria propia. Con un tope de 1.280 MB tocaba el límite (1.929 eventos `max` en el
+cgroup, sin OOM); con 1.536 MB no lo toca. Como no corre junto con el pipeline, en la notebook de
+8 GB conviven Postgres (1,5 GB) y Metabase (1,5 GB).
+
+### Verificado
+
+| Prueba | Resultado |
+| --- | --- |
+| Arranque | `/api/health` responde en unos 40 s |
+| Primera corrida con el volumen vacío | Crea el usuario, la conexión, 15 tarjetas y el tablero |
+| Segunda corrida | Mismas tarjetas y mismo tablero, sin duplicados |
+| Las 15 tarjetas por la API | Todas sin error; viajes 4.013.620, +14,78 %, tarifa US$ 19,22, −0,07 %, CBD 73,98 % (iguales a `RESULTADOS.md`) |
+| `make test` | 22 pasan, 3 de ellos nuevos |

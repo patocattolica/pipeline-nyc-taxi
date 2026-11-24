@@ -38,7 +38,7 @@ DEFINICIONES := -m orquestacion.definitions
 
 MES ?=
 
-.PHONY: all revisar-mes postgres manifiesto dagster-home ui test conteos
+.PHONY: all revisar-mes postgres manifiesto dagster-home ui test conteos viz
 
 # El mes de comparación lo calcula Dagster (recurso periodo en src/orquestacion/definitions.py).
 all: revisar-mes postgres manifiesto dagster-home
@@ -74,6 +74,12 @@ dagster-home:
 # Interfaz de Dagster en http://localhost:3000, con el historial de corridas de make all.
 ui: postgres manifiesto dagster-home
 	$(DAGSTER) dev $(DEFINICIONES)
+
+# Tablero opcional en Metabase (http://localhost:3001), después de make all. No es parte del
+# pipeline: levanta el servicio del perfil viz y arma el tablero con src/tablero.py.
+viz: postgres | $(PYTHON)
+	docker compose --profile viz up -d metabase
+	PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m tablero
 
 test: manifiesto
 	$(PYTHON) -m pytest -q
