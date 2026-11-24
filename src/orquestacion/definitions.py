@@ -19,6 +19,7 @@ import os
 import re
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import dagster as dg
@@ -54,6 +55,32 @@ class Periodo(dg.ConfigurableResource):
         return [self.mes, self.mes_comp]
 
 
+# Una línea JSON por cada línea de log de las etapas. Lo lee Grafana Alloy y lo manda a Loki
+# (make obs); si nadie lo lee, es solo un archivo más en logs/, que Git ignora.
+LOG_PIPELINE = RAIZ / "logs" / "pipeline.log"
+
+
+def escribir_log(context, paso, linea):
+    """Manda una línea al log de la corrida de Dagster y a logs/pipeline.log."""
+    context.log.info(linea)
+    try:
+        run_id = context.run_id
+    except Exception:  # contexto armado a mano, como en los tests
+        run_id = None
+    registro = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "run_id": run_id,
+        "paso": paso,
+        "linea": linea,
+    }
+    try:
+        LOG_PIPELINE.parent.mkdir(exist_ok=True)
+        with LOG_PIPELINE.open("a", encoding="utf-8") as archivo:
+            archivo.write(json.dumps(registro, ensure_ascii=False) + "\n")
+    except OSError:
+        pass  # el archivo es un extra: la línea ya quedó en el log de Dagster
+
+
 def correr_etapa(context, modulo, mes):
     """Ejecuta `python -m pipeline.<modulo> --mes <mes>` y falla si sale con código distinto de 0."""
     comando = [sys.executable, "-m", f"pipeline.{modulo}", "--mes", mes]
@@ -65,7 +92,7 @@ def correr_etapa(context, modulo, mes):
         "PYTHONUNBUFFERED": "1",
         "PYTHONIOENCODING": "utf-8",
     }
-    context.log.info("Ejecuta: " + " ".join(comando[1:]))
+    escribir_log(context, modulo, "Ejecuta: " + " ".join(comando[1:]))
     # La salida de la etapa (incluidos los logs de dlt) se reenvía al log de Dagster, así
     # queda en la corrida de la interfaz y no solo en la terminal.
     with subprocess.Popen(
@@ -80,7 +107,7 @@ def correr_etapa(context, modulo, mes):
     ) as proceso:
         for linea in proceso.stdout:
             if linea.strip():
-                context.log.info(linea.rstrip())
+                escribir_log(context, modulo, linea.rstrip())
     if proceso.returncode != 0:
         raise dg.Failure(
             f"pipeline.{modulo} --mes {mes} salió con código {proceso.returncode}"
@@ -127,8 +154,9 @@ class AlLogDeDagster:
 
     _COLOR = re.compile(r"\x1b\[[0-9;]*m")
 
-    def __init__(self, log):
-        self._log = log
+    def __init__(self, context, paso):
+        self._context = context
+        self._paso = paso
         self._pendiente = ""
 
     def write(self, texto):
@@ -136,7 +164,7 @@ class AlLogDeDagster:
         for linea in lineas:
             linea = self._COLOR.sub("", linea).rstrip()
             if linea:
-                self._log.info(linea)
+                escribir_log(self._context, self._paso, linea)
         return len(texto)
 
     def flush(self):
@@ -147,7 +175,7 @@ class AlLogDeDagster:
 def modelos_dbt(context: dg.AssetExecutionContext, dbt: DbtCliResource, periodo: Periodo):
     # Un solo `dbt build`, como en el paso 14. Si falla un test (la reconciliación incluida),
     # dbt sale con código 1, dagster-dbt lanza un error y la curada no se ejecuta.
-    with contextlib.redirect_stdout(AlLogDeDagster(context.log)):
+    with contextlib.redirect_stdout(AlLogDeDagster(context, "modelos_dbt")):
         yield from dbt.cli(
             ["build", "--vars", json.dumps({"mes": periodo.mes})], context=context
         ).stream()

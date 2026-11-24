@@ -38,7 +38,7 @@ DEFINICIONES := -m orquestacion.definitions
 
 MES ?=
 
-.PHONY: all revisar-mes postgres manifiesto dagster-home ui test conteos viz
+.PHONY: all revisar-mes postgres manifiesto dagster-home ui test conteos viz obs
 
 # El mes de comparación lo calcula Dagster (recurso periodo en src/orquestacion/definitions.py).
 all: revisar-mes postgres manifiesto dagster-home
@@ -80,6 +80,12 @@ ui: postgres manifiesto dagster-home
 viz: postgres | $(PYTHON)
 	docker compose --profile viz up -d metabase
 	PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m tablero
+
+# Observabilidad opcional (Grafana en http://localhost:3002): métricas de Postgres y de los
+# contenedores (Prometheus) y logs de Postgres, dbt y las etapas (Loki). Aparte de make all:
+# suma ~1,5 GB de topes de RAM, así que no conviene tenerla junto con make viz en 8 GB.
+obs: postgres
+	docker compose --profile obs up -d --wait
 
 test: manifiesto
 	$(PYTHON) -m pytest -q

@@ -1,0 +1,79 @@
+// Grafana Alloy: recoge los logs y los manda a Loki. Tres orígenes:
+//   1. el contenedor de Postgres (checkpoints, reinicios, errores), por el socket de Docker;
+//   2. logs/dbt.log, el archivo de dbt;
+//   3. logs/pipeline.log, una línea JSON por cada línea que escriben las etapas del pipeline
+//      (descarga, ingesta, curada y dbt) dentro de Dagster.
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
+
+// 1. Postgres
+discovery.docker "contenedores" {
+  host = "unix:///var/run/docker.sock"
+
+  filter {
+    name   = "name"
+    values = ["taxi_postgres"]
+  }
+}
+
+discovery.relabel "postgres" {
+  targets = discovery.docker.contenedores.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "contenedor"
+  }
+}
+
+loki.source.docker "postgres" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.postgres.output
+  labels     = { servicio = "postgres" }
+  forward_to = [loki.write.local.receiver]
+}
+
+// 2. dbt
+local.file_match "dbt" {
+  path_targets = [{ __path__ = "/logs/dbt.log", servicio = "dbt" }]
+}
+
+loki.source.file "dbt" {
+  targets    = local.file_match.dbt.targets
+  forward_to = [loki.write.local.receiver]
+}
+
+// 3. Etapas del pipeline
+local.file_match "pipeline" {
+  path_targets = [{ __path__ = "/logs/pipeline.log", servicio = "pipeline" }]
+}
+
+loki.source.file "pipeline" {
+  targets    = local.file_match.pipeline.targets
+  forward_to = [loki.process.pipeline.receiver]
+}
+
+loki.process "pipeline" {
+  stage.json {
+    expressions = { ts = "ts", paso = "paso", linea = "linea" }
+  }
+
+  stage.timestamp {
+    source = "ts"
+    format = "RFC3339Nano"
+  }
+
+  stage.labels {
+    values = { paso = "" }
+  }
+
+  stage.output {
+    source = "linea"
+  }
+
+  forward_to = [loki.write.local.receiver]
+}

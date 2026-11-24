@@ -35,6 +35,27 @@ reporte de calidad, las filas del modelo y el hash de cada archivo curado; es lo
 para comparar dos corridas. `make ui` abre la interfaz de Dagster en http://localhost:3000, con
 el grafo de etapas y el historial de corridas. `make test` corre los tests de Python.
 
+En Windows se corre igual, desde Git Bash, con Python 3.11 instalado (`py -3.11`): el Makefile
+detecta el sistema y ajusta las rutas del entorno virtual. Dejamos `PGHOST=127.0.0.1` y no
+`localhost` porque en Windows `localhost` prueba primero IPv6 y cada conexión esperaba más de
+dos minutos antes de caer a IPv4.
+
+### Observabilidad opcional (Grafana)
+
+`make obs` levanta, aparte de `make all`, Grafana en http://localhost:3002 (usuario `admin`, la
+clave está en `GF_ADMIN_PASSWORD` del `.env`) con el tablero "Pipeline de taxis":
+
+- Prometheus y `postgres_exporter` dan las métricas de Postgres: disco temporal derramado,
+  checkpoints, tamaño del WAL, conexiones y aciertos de caché.
+- cAdvisor da la RAM y la CPU de cada contenedor frente a su tope (antes se medía a mano con
+  `docker stats`).
+- Loki, con Grafana Alloy como recolector, reúne los logs de Postgres, de dbt (`logs/dbt.log`) y
+  de las etapas del pipeline (`logs/pipeline.log`, que escribe `src/orquestacion/definitions.py`).
+
+Son 6 contenedores que, con el tablero abierto, usan unos 350 MiB en total (medido con cAdvisor
+en una corrida); cada uno tiene un tope de memoria en `compose.yaml`. No arrancan con `make all`.
+Para apagarlos: `docker compose --profile obs down`.
+
 ## Cómo lo armamos
 
 El recorrido es siempre el mismo y corre dos veces, primero para el mes asignado y después para

@@ -66,6 +66,116 @@ services:
     volumes:
       - metabase_data:/metabase-data
 
+  # Observabilidad opcional (perfil obs): solo arranca con `make obs`, nunca con `make all`.
+  # Grafana en http://localhost:3002 con métricas de Postgres y de los contenedores (Prometheus)
+  # y los logs de Postgres, dbt y las etapas del pipeline (Loki). Los topes de memoria suman
+  # ~1,5 GB, así que no conviene tenerlo junto con Metabase en una máquina de 8 GB.
+  postgres_exporter:
+    image: prometheuscommunity/postgres-exporter:v0.21.1
+    container_name: taxi_postgres_exporter
+    profiles: ["obs"]
+    restart: unless-stopped
+    mem_limit: 64m
+    # Checkpoints (programados y pedidos por WAL) y escritura de segundo plano de Postgres 17.
+    command:
+      - --collector.stat_checkpointer
+      - --collector.stat_bgwriter
+    environment:
+      DATA_SOURCE_NAME: postgresql://${PGUSER}:${PGPASSWORD}@postgres:5432/${PGDATABASE}?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # RAM, CPU y tope de cada contenedor (es lo que se medía a mano con `docker stats`).
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.55.1
+    container_name: taxi_cadvisor
+    profiles: ["obs"]
+    restart: unless-stopped
+    mem_limit: 192m
+    command:
+      - --docker_only=true
+      - --housekeeping_interval=5s
+      - --store_container_labels=false
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+
+  prometheus:
+    image: prom/prometheus:v3.16.0
+    container_name: taxi_prometheus
+    profiles: ["obs"]
+    restart: unless-stopped
+    mem_limit: 384m
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+    volumes:
+      - ./observabilidad/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      - postgres_exporter
+      - cadvisor
+
+  loki:
+    image: grafana/loki:3.6.4
+    container_name: taxi_loki
+    profiles: ["obs"]
+    restart: unless-stopped
+    mem_limit: 384m
+    command: ["-config.file=/etc/loki/loki.yml"]
+    volumes:
+      - ./observabilidad/loki.yml:/etc/loki/loki.yml:ro
+      - loki_data:/loki
+
+  # Recolector de logs (reemplaza a Promtail): Postgres por el socket de Docker, y los archivos
+  # logs/dbt.log y logs/pipeline.log de la carpeta del proyecto.
+  alloy:
+    image: grafana/alloy:v1.22.0
+    container_name: taxi_alloy
+    profiles: ["obs"]
+    restart: unless-stopped
+    mem_limit: 192m
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    volumes:
+      - ./observabilidad/alloy.alloy:/etc/alloy/config.alloy:ro
+      - ./logs:/logs:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - alloy_data:/var/lib/alloy/data
+    depends_on:
+      - loki
+
+  grafana:
+    image: grafana/grafana:12.4.15
+    container_name: taxi_grafana
+    profiles: ["obs"]
+    restart: unless-stopped
+    mem_limit: 384m
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_ADMIN_PASSWORD:-admin}
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    ports:
+      - "127.0.0.1:${GF_PUERTO:-3002}:3000"
+    volumes:
+      - ./observabilidad/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observabilidad/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+      - loki
+
 volumes:
   pgdata:
   metabase_data:
+  prometheus_data:
+  loki_data:
+  alloy_data:
+  grafana_data:
