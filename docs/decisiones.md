@@ -21,8 +21,9 @@ como **2025-03 / 2024-03** cuando corresponde.
 | 13. Modelo estrella, tabla agregada y las seis preguntas | Hecho | `sql/modelo/`, `sql/preguntas/`, `RESULTADOS.md` |
 | 14. `make all` de punta a punta, dos veces, con los mismos conteos | Hecho | `Makefile`, `.env.example`, `.dlt/config.toml` |
 | 16. Orquestación con Dagster | Hecho en la rama `dagster` | `src/orquestacion/definitions.py`, `Makefile`, `tests/test_orquestacion.py` |
-| R19 (tarifa negativa con total positivo) y medición de `make all` | Hecho en la rama `fix-tarifas` | `seeds/reglas_calidad.csv`, `sql/calidad/`, `sql/modelo/fact_trips.sql`, `sql/preguntas/` |
-| 15 (medición en la notebook de 8 GB) y 17 en adelante | Pendiente | — |
+| 15. Tiempo y pico de RAM de `make all` en la propia máquina | Hecho en la rama `fix-tarifas` | Sección "Medición de `make all`" de este archivo |
+| R19 (tarifa negativa con total positivo) | Hecho en la rama `fix-tarifas` | `seeds/reglas_calidad.csv`, `sql/calidad/`, `sql/modelo/fact_trips.sql`, `sql/preguntas/` |
+| 17 en adelante | Pendiente | — |
 
 **Ramas:**
 - `master`: diseño original, con PyAirbyte.
@@ -241,7 +242,7 @@ de control cubre toda la Parte 1. La URL queda vacía para la ingesta.
 | Tests | 4 de descarga y 4 de ingesta: decisión de salteo, renombre y columna faltante, corte por esquema y aviso por columna nueva |
 
 **Pendientes del diseño con dlt:**
-- **Medición.** Repetir la medición en la notebook de 8 GB.
+- **Medición (resuelto en el paso 15).** Ver la sección "Medición de `make all`".
 - **Tabla intermedia de dlt (resuelto en el paso 14).** El merge dejaba
   `raw_staging.yellow_trips` con el último mes cargado (3.582.628 filas, 859 MB). Ahora dlt
   la vacía al terminar cada carga, con `truncate_staging_dataset = true` en
@@ -355,7 +356,8 @@ tabla intermedia de dlt y 1,96 GB de staging. Faltan las tablas de calidad y el 
 | `dbt test` | 16 tests pasan, los 2 unit tests incluidos |
 
 **Pendiente:** `int_calidad` tarda unos 4 minutos, el doble que la prueba sintética del
-diseño original. Medirlo en la notebook de 8 GB y, si hace falta, optimizarlo.
+diseño original. Medido en el paso 15: el pipeline completo entra holgado en 8 GB, así que
+no se optimizó.
 
 ### Reporte de calidad y reconciliación (paso 11)
 
@@ -596,7 +598,7 @@ revisar-mes, postgres, entorno -> descarga -> ingesta -> transformacion (dbt bui
 | `make test` | 9 pasan |
 
 Casi todo el tiempo de una corrida es `dbt build`, y dentro de él `int_calidad` (unos 4
-minutos). Falta medir tiempo y pico de RAM en la notebook de 8 GB (paso 15).
+minutos). El tiempo y el pico de RAM están en la sección "Medición de `make all`" (paso 15).
 
 ## Orquestación con Dagster (paso 16)
 
@@ -730,10 +732,10 @@ de pytest y, si se corre pytest suelto sin el manifiesto, el archivo se saltea c
 | RAM pico (`/usr/bin/time`, el proceso más grande, sin contar Postgres) | 704 MiB en la corrida 1 y 1.090 MiB en la corrida 2, en una máquina de 12 CPU y 14 GiB |
 
 Las corridas por Dagster tardan lo mismo que con Make: casi todo el tiempo sigue siendo
-`dbt build`, y dentro de él `int_calidad`. Falta medir tiempo y pico de RAM en la notebook de
-8 GB (paso 15).
+`dbt build`, y dentro de él `int_calidad`. El tiempo y el pico de RAM están en la sección
+"Medición de `make all`" (paso 15).
 
-## Medición de `make all` (después de R19)
+## Medición de `make all` (paso 15, después de R19)
 
 Medido con `/usr/bin/time -v make all MES=2025-03`, con los datos ya descargados e ingeridos
 (descarga e ingesta se saltean por hash) y el contenedor de Postgres ya levantado. La memoria
@@ -747,8 +749,10 @@ del contenedor.
 | Pico de memoria del contenedor de Postgres (`docker stats`) | 1,48 GiB, contra el tope de 1,5 GiB de `mem_limit` |
 | `dbt build` | 62 de 62 (dos más que antes: el unit test de R19 y el `not_null` de `tarifa_confiable`) |
 | `make conteos` | Leídas 3.582.628 / 4.145.257; aceptadas 3.534.033 / 4.051.870; cuarentena 48.595 / 93.387; diferencia 0 |
-| Máquina | 8 CPU (`nproc`) y 14 GiB de RAM; no es la notebook de 8 GB |
+| Máquina | La propia: 8 CPU (`nproc`) y 14 GiB de RAM |
 
 - `Maximum resident set size` es el pico del proceso más grande que lanzó `make`, no la suma
   de todos los procesos. Sumado al pico de Postgres, el pipeline queda en unos 2,5 GiB.
-- Sigue pendiente repetir la medición en la notebook de 8 GB (paso 15).
+- La consigna pide medir en la propia máquina y que el pipeline corra en una notebook de
+  8 GB, que es donde lo prueba el docente. El pico medido (unos 2,5 GiB) entra holgado, y
+  Postgres no puede pasar de 1,5 GiB porque lo limita `mem_limit` en `compose.yaml`.
