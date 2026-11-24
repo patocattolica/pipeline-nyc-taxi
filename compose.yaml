@@ -19,10 +19,23 @@ services:
       - postgres
       - -c
       - shared_buffers=384MB
+      # Con 32 MB los ordenamientos y agrupaciones sobre ~7,7 millones de filas derramaban
+      # varios GB a disco temporal; con 64 MB casi no derraman y la RAM pico del contenedor baja.
       - -c
-      - work_mem=32MB
+      - work_mem=64MB
       - -c
       - maintenance_work_mem=128MB
+      # dbt reconstruye tablas de GB con CREATE TABLE AS y generaba ~1,4 GB de WAL en dos
+      # modelos: con el tope de 1 GB había un checkpoint cada ~100 s.
+      - -c
+      - max_wal_size=4GB
+      # wal_level=minimal: las tablas creadas con CREATE TABLE AS no escriben WAL. Es una base
+      # local de análisis que se reconstruye con make all: no hay replicación ni respaldo
+      # continuo (archivado de WAL). Para eso habría que volver a wal_level=replica.
+      - -c
+      - wal_level=minimal
+      - -c
+      - max_wal_senders=0
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
