@@ -10,11 +10,27 @@
 export
 
 # Entorno virtual: se crea con PYTHON_BASE (Python 3.11) solo si no existe.
+# En Windows (la variable de entorno OS vale Windows_NT) el venv deja los ejecutables en
+# Scripts/ con extensión .exe, y Python 3.11 se invoca con el lanzador "py -3.11". Hay que
+# correr make desde Git Bash (o cualquier shell con sh y grep en el PATH). Con la extensión
+# .exe en las rutas, Make reconoce que el venv ya existe y no lo recrea en cada corrida.
+ifeq ($(OS),Windows_NT)
+PYTHON_BASE ?= py -3.11
+VENV_BIN ?= Scripts
+EXE ?= .exe
+# Click expande los comodines en Windows: --select '*' se convertiría en la lista de
+# archivos de la carpeta. key:"*" selecciona todos los assets y Click lo deja intacto.
+SELECCION ?= key:"*"
+else
 PYTHON_BASE ?= python3.11
+VENV_BIN ?= bin
+EXE ?=
+SELECCION ?= *
+endif
 VENV ?= .venv-dlt
-PYTHON := $(VENV)/bin/python
-DBT := $(VENV)/bin/dbt
-DAGSTER := $(VENV)/bin/dagster
+PYTHON := $(VENV)/$(VENV_BIN)/python$(EXE)
+DBT := $(VENV)/$(VENV_BIN)/dbt$(EXE)
+DAGSTER := $(VENV)/$(VENV_BIN)/dagster$(EXE)
 PYTHONPATH := src
 # Estado de Dagster (corridas, logs): fuera de los datos y fuera de Git.
 DAGSTER_HOME := $(CURDIR)/dagster_home
@@ -26,7 +42,7 @@ MES ?=
 
 # El mes de comparación lo calcula Dagster (recurso periodo en src/orquestacion/definitions.py).
 all: revisar-mes postgres manifiesto dagster-home
-	$(DAGSTER) asset materialize $(DEFINICIONES) --select '*' \
+	$(DAGSTER) asset materialize $(DEFINICIONES) --select '$(SELECCION)' \
 		--config-json '{"resources": {"periodo": {"config": {"mes": "$(MES)"}}}}'
 
 revisar-mes:

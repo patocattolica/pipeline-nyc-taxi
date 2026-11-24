@@ -87,6 +87,9 @@ def crear_pipeline():
         destination=dlt.destinations.postgres(url),
         dataset_name=ESQUEMA_PG,
         pipelines_dir=str(RAIZ / "data/dlt"),  # estado local de dlt, fuera de Git
+        # Avance de la extracción, normalización y carga cada 10 s (filas, tiempo, memoria),
+        # para seguir la ingesta en vivo, también desde el log de Dagster.
+        progress=dlt.progress.log(log_period=10, dump_system_stats=False),
     )
 
 

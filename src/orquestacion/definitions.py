@@ -13,6 +13,7 @@ Las etapas de descarga, ingesta y curada se ejecutan con su propio comando
 hash, reconciliación, ingestion_log) y su código de salida decide si el asset falla.
 """
 
+import contextlib
 import json
 import os
 import re
@@ -28,7 +29,8 @@ from pipeline.descarga import RAIZ, contar_filas, ruta_parquet, sha256_de
 
 PROYECTO_DBT = DbtProject(project_dir=RAIZ)
 # El dbt del mismo entorno virtual que corre Dagster, sin depender del PATH.
-DBT_EJECUTABLE = str(Path(sys.executable).parent / "dbt")
+# En Windows el ejecutable se llama dbt.exe.
+DBT_EJECUTABLE = str(Path(sys.executable).parent / ("dbt.exe" if os.name == "nt" else "dbt"))
 
 
 class Periodo(dg.ConfigurableResource):
@@ -55,12 +57,33 @@ class Periodo(dg.ConfigurableResource):
 def correr_etapa(context, modulo, mes):
     """Ejecuta `python -m pipeline.<modulo> --mes <mes>` y falla si sale con código distinto de 0."""
     comando = [sys.executable, "-m", f"pipeline.{modulo}", "--mes", mes]
-    entorno = {**os.environ, "PYTHONPATH": str(RAIZ / "src")}
+    # PYTHONUNBUFFERED y PYTHONIOENCODING hacen que la salida llegue línea a línea y en UTF-8
+    # aunque no vaya a una terminal.
+    entorno = {
+        **os.environ,
+        "PYTHONPATH": str(RAIZ / "src"),
+        "PYTHONUNBUFFERED": "1",
+        "PYTHONIOENCODING": "utf-8",
+    }
     context.log.info("Ejecuta: " + " ".join(comando[1:]))
-    resultado = subprocess.run(comando, cwd=RAIZ, env=entorno)
-    if resultado.returncode != 0:
+    # La salida de la etapa (incluidos los logs de dlt) se reenvía al log de Dagster, así
+    # queda en la corrida de la interfaz y no solo en la terminal.
+    with subprocess.Popen(
+        comando,
+        cwd=RAIZ,
+        env=entorno,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    ) as proceso:
+        for linea in proceso.stdout:
+            if linea.strip():
+                context.log.info(linea.rstrip())
+    if proceso.returncode != 0:
         raise dg.Failure(
-            f"pipeline.{modulo} --mes {mes} salió con código {resultado.returncode}"
+            f"pipeline.{modulo} --mes {mes} salió con código {proceso.returncode}"
         )
 
 
@@ -94,11 +117,40 @@ def ingesta(context: dg.AssetExecutionContext, periodo: Periodo):
     yield dg.MaterializeResult(asset_key=["raw", "taxi_zones"])
 
 
+class AlLogDeDagster:
+    """Archivo de texto que manda cada línea escrita al log de eventos de Dagster.
+
+    dagster-dbt escribe el texto de dbt ("1 of 65 START ...", los errores de la base) en
+    sys.stdout. Ahí solo se ve si Dagster captura stdout, y en Windows no lo hace. Con esto
+    llega como INFO a la corrida, en vivo y en cualquier sistema.
+    """
+
+    _COLOR = re.compile(r"\x1b\[[0-9;]*m")
+
+    def __init__(self, log):
+        self._log = log
+        self._pendiente = ""
+
+    def write(self, texto):
+        *lineas, self._pendiente = (self._pendiente + texto).split("\n")
+        for linea in lineas:
+            linea = self._COLOR.sub("", linea).rstrip()
+            if linea:
+                self._log.info(linea)
+        return len(texto)
+
+    def flush(self):
+        pass
+
+
 @dbt_assets(manifest=PROYECTO_DBT.manifest_path, project=PROYECTO_DBT)
 def modelos_dbt(context: dg.AssetExecutionContext, dbt: DbtCliResource, periodo: Periodo):
     # Un solo `dbt build`, como en el paso 14. Si falla un test (la reconciliación incluida),
     # dbt sale con código 1, dagster-dbt lanza un error y la curada no se ejecuta.
-    yield from dbt.cli(["build", "--vars", json.dumps({"mes": periodo.mes})], context=context).stream()
+    with contextlib.redirect_stdout(AlLogDeDagster(context.log)):
+        yield from dbt.cli(
+            ["build", "--vars", json.dumps({"mes": periodo.mes})], context=context
+        ).stream()
 
 
 @dg.asset(
